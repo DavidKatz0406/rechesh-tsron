@@ -228,6 +228,23 @@
     transition:all .25s ease; white-space:nowrap;
   }
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  .site-chip{ margin:0 18px 10px; padding:9px 12px; background:var(--paper); border:1px solid var(--line); border-radius:10px; font-size:12.5px; color:var(--ink-soft); display:flex; justify-content:space-between; align-items:center; gap:8px; cursor:pointer; }
+  .site-chip b{ color:var(--ink); font-weight:700; }
+  .site-chip span.sw{ color:var(--pipe-blue); font-weight:700; white-space:nowrap; }
+  #entry{ position:fixed; inset:0; z-index:70; background:var(--bg); overflow-y:auto; display:none; }
+  #entry.open{ display:block; }
+  .entry-in{ max-width:460px; margin:0 auto; padding:28px 18px 40px; }
+  .entry-in h1{ font-family:'Rubik',sans-serif; font-size:21px; font-weight:700; margin:18px 0 4px; }
+  .entry-in p.sub{ font-size:13px; color:var(--ink-soft); margin:0 0 16px; line-height:1.5; }
+  .site-card{ background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:10px; cursor:pointer; position:relative; }
+  .site-card:active{ border-color:var(--pipe-blue); }
+  .site-card .sn{ font-weight:700; font-size:15px; }
+  .site-card .sa{ font-size:13px; color:var(--ink-soft); margin-top:3px; }
+  .site-card .sc{ font-size:12.5px; color:var(--ink); margin-top:6px; }
+  .site-card .del{ position:absolute; top:8px; left:10px; background:none; border:none; color:var(--urgent); font-size:12px; font-weight:600; cursor:pointer; }
+  .entry-in input{ width:100%; margin-top:8px; padding:11px; border:1px solid var(--line); border-radius:10px; font-family:'Assistant',sans-serif; font-size:14px; background:var(--paper); color:var(--ink); }
+  .entry-add{ width:100%; padding:12px; border:1px dashed var(--ink-soft); border-radius:12px; background:transparent; color:var(--ink); font-family:'Rubik',sans-serif; font-size:14px; font-weight:600; cursor:pointer; margin-top:4px; }
 </style>
 </head>
 <body>
@@ -245,6 +262,8 @@
     </button>
   </div>
 
+  <div class="site-chip" id="siteChip" onclick="showEntry()"></div>
+  <div class="site-chip" id="pendingBar" onclick="showFallbackPanel()" style="display:none; background:var(--copper-bg); border-color:var(--copper);"></div>
   <div class="intro">כל עובד יכול להזמין ישירות מהקטלוג. <b>המחיר הזול ביותר</b> מסומן אוטומטית בכל פריט.</div>
 
   <div class="tabs" id="tabs"></div>
@@ -260,6 +279,8 @@
   </div>
   <div class="drawer-body" id="drawerBody"></div>
 </div>
+
+<div id="entry"><div class="entry-in" id="entryIn"></div></div>
 
 <div class="toast" id="toast"></div>
 
@@ -575,8 +596,13 @@ function renderCart(){
     <div class="summary-row"><span>מע״מ (18%)</span><span>₪${vat.toFixed(2)}</span></div>
     <div class="summary-row total"><span>סה״כ לתשלום</span><span>₪${total.toFixed(2)}</span></div>
   </div>
-  <input type="text" placeholder="אתר / פרויקט לאספקה (יופיע בהודעה לספק)" value="${orderNote.replace(/"/g,'&quot;')}" oninput="orderNote=this.value" style="width:100%; margin-top:14px; padding:11px; border:1px solid var(--line); border-radius:10px; font-family:'Assistant',sans-serif; font-size:13.5px; background:var(--paper);">
-  <button class="send-btn" onclick="sendOrder()" style="margin-top:10px;">שליחה לשרון בווצאפ</button>
+  ${currentSite ? `<div style="margin-top:14px; background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:12.5px; line-height:1.6;">
+    <div style="font-weight:700; font-size:13.5px;">${escH(currentSite.name)}</div>
+    <div>איש קשר: ${escH(currentSite.contact)} · ${escH(currentSite.phone)}</div>
+    <div style="margin-top:4px;"><a onclick="closeCart(); showEntry();" style="color:var(--pipe-blue); font-weight:700; cursor:pointer;">החלף פרויקט</a></div>
+  </div>` : ''}
+  ${needsApproval(total) ? `<div style="margin-top:10px; padding:10px 12px; border:1px solid var(--copper); background:var(--copper-bg); border-radius:10px; font-size:12.5px; line-height:1.5;"><b>ההזמנה מעל ₪${fmtN(APPROVAL_LIMIT)} (כולל מע״מ) — נדרש אישור של ${APPROVER.name}.</b><br>קודם נשלחת אליו בקשת אישור, ורק אחרי שהוא מאשר אפשר לשלוח לשרון.</div>` : ''}
+  <button class="send-btn" onclick="sendOrder()" style="margin-top:10px;">${needsApproval(total) ? 'שלח ל' + APPROVER.name + ' לאישור' : 'שליחה לשרון בווצאפ'}</button>
   <div style="text-align:center; font-size:11px; color:var(--ink-soft); margin-top:8px;">ההודעה בלי מחירים, מוכנה להעברה לספק. הזמנה עם כמה ספקים נשלחת כהודעה נפרדת לכל ספק.</div>`;
 
   body.innerHTML = linesHtml + modeToggleHtml + compareHtml + summaryHtml;
@@ -604,9 +630,303 @@ function closeCart(){
   document.getElementById('drawer').classList.remove('open');
 }
 const SHARON_WHATSAPP = '972528633259';
-let orderNote = '';
-let lastOrders = [];
+// ===== משתמשים, פרויקטים ואישורים =====
+// מורשים להזמין לכל הפרויקט: מג׳ד, דוד, טל ושרון. מנהלי פרויקט רואים רק את הפרויקטים של המספר שלהם.
+const PRIV = [
+  { name:'דוד',  phone:'0504560060' },
+  { name:'טל',   phone:'0524672267' },
+  { name:'מג׳ד', phone:'0504344228' },
+  { name:'שרון', phone:'0528633259' }
+];
+const APPROVER = { name:'טל', phone:'0524672267', whatsapp:'972524672267' };
+const APPROVAL_LIMIT = 10000;   // הזמנה שסכומה (כולל מע״מ) גבוה מזה — דורשת אישור של טל
+function needsApproval(totalInclVat){ return totalInclVat > APPROVAL_LIMIT && !(user && user.phone === APPROVER.phone); }
+function fmtN(n){ return Number(n).toLocaleString('he-IL', {maximumFractionDigits:0}); }
 
+const PROJECTS = [
+ {
+  "id": "p1",
+  "client": "אשטרום",
+  "contact": "יזיד עבד",
+  "phone": "0526823507",
+  "name": "עץ החיים ירושלים"
+ },
+ {
+  "id": "p2",
+  "client": "מנרב",
+  "contact": "אייל פאטורי",
+  "phone": "0544235277",
+  "name": "חצרים"
+ },
+ {
+  "id": "p3",
+  "client": "אשטרום הנדסה",
+  "contact": "יזיד אבו שריף",
+  "phone": "0549175856",
+  "name": "מרים החשמונאית"
+ },
+ {
+  "id": "p4",
+  "client": "יעקבי יוניברסל",
+  "contact": "סאמר",
+  "phone": "0524424500",
+  "name": "פרויקט לוד"
+ },
+ {
+  "id": "p5",
+  "client": "יעקבי יוניברסל",
+  "contact": "באהה",
+  "phone": "0527067565",
+  "name": "פרויקט פ\"ת"
+ },
+ {
+  "id": "p6",
+  "client": "קבוצת אשטרום",
+  "contact": "יער",
+  "phone": "0542580699",
+  "name": "הרצל 66 בת ים"
+ },
+ {
+  "id": "p7",
+  "client": "פורמה",
+  "contact": "אלכס",
+  "phone": "0523624050",
+  "name": "בת ים הפרדס פורמה"
+ },
+ {
+  "id": "p8",
+  "client": "אלקטרה",
+  "contact": "אבו לאבן",
+  "phone": "0504263388",
+  "name": "מתחם 5 כפר אזר"
+ },
+ {
+  "id": "p9",
+  "client": "דניה",
+  "contact": "מוראר",
+  "phone": "0504388586",
+  "name": "קרסו וייצמן 55-57 חולון דניה"
+ },
+ {
+  "id": "p10",
+  "client": "לוינשטין נתיב",
+  "contact": "יער",
+  "phone": "0542580699",
+  "name": "עצמאות 28 בת ים לוינשטיין"
+ },
+ {
+  "id": "p11",
+  "client": "פורמה",
+  "contact": "צביקה",
+  "phone": "0527979851",
+  "name": "הברון הירש ת\"א פורמה"
+ },
+ {
+  "id": "p12",
+  "client": "דניה",
+  "contact": "איתי",
+  "phone": "0522343636",
+  "name": "הולצברג בת ים דניה"
+ },
+ {
+  "id": "p13",
+  "client": "גבאי",
+  "contact": "אולג",
+  "phone": "0529767299",
+  "name": "מלון לידו אשדוד"
+ },
+ {
+  "id": "p14",
+  "client": "הר סוף",
+  "contact": "וואהל",
+  "phone": "0523474389",
+  "name": "מגרש 105 מזכרת בתיה"
+ },
+ {
+  "id": "p15",
+  "client": "הר סוף",
+  "contact": "וואהל",
+  "phone": "0523474389",
+  "name": "קוטגים"
+ },
+ {
+  "id": "p16",
+  "client": "הר סוף",
+  "contact": "באהה",
+  "phone": "0527067565",
+  "name": "מגרש 19-20 מזכרת בתיה"
+ },
+ {
+  "id": "p17",
+  "client": "הר סוף",
+  "contact": "סאמר",
+  "phone": "0524424500",
+  "name": "מגרש 504 גדרה"
+ },
+ {
+  "id": "p18",
+  "client": "דניה",
+  "contact": "איתי",
+  "phone": "0522343636",
+  "name": "שנקר חולון"
+ },
+ {
+  "id": "p19",
+  "client": "דניה",
+  "contact": "וואהל",
+  "phone": "0523474389",
+  "name": "מרלו\"ג פוקס בית שמש"
+ },
+ {
+  "id": "p20",
+  "client": "דניה",
+  "contact": "יניב",
+  "phone": "0556888776",
+  "name": "הר נוף"
+ },
+ {
+  "id": "p21",
+  "client": "רוטשטיין",
+  "contact": "משה",
+  "phone": "0505506168",
+  "name": "רמת השרון"
+ },
+ {
+  "id": "p22",
+  "client": "דניה",
+  "contact": "משה",
+  "phone": "0505506168",
+  "name": "גליל ים"
+ },
+ {
+  "id": "p23",
+  "client": "דניה",
+  "contact": "כרובי",
+  "phone": "0543302744",
+  "name": "עיר עולם"
+ },
+ {
+  "id": "p24",
+  "client": "יצחקי",
+  "contact": "אולג/גינאדי",
+  "phone": "0529767299",
+  "name": "מלון תל אביב"
+ },
+ {
+  "id": "p25",
+  "client": "אשטרום",
+  "contact": "באהה",
+  "phone": "0527067565",
+  "name": "מאז\"ה"
+ }
+];
+let mgrPhone = null;
+let user = null;          // {name, phone, priv}
+let currentSite = null;
+let pending = null;       // הזמנה שממתינה לאישור של טל
+function normPhone(s){ let d = String(s || '').replace(/\D/g, ''); if(d.startsWith('972')) d = '0' + d.slice(3); return d; }
+function privOf(ph){ return PRIV.find(p => normPhone(p.phone) === ph); }
+function isKnown(ph){ return ph.length >= 9 && (!!privOf(ph) || PROJECTS.some(p => normPhone(p.phone) === ph)); }
+function myProjects(){
+  if(!mgrPhone) return [];
+  return privOf(mgrPhone) ? PROJECTS.slice() : PROJECTS.filter(p => normPhone(p.phone) === mgrPhone);
+}
+function setUser(ph){
+  mgrPhone = ph;
+  const pv = privOf(ph);
+  if(pv) user = {name:pv.name, phone:ph, priv:true};
+  else { const f = PROJECTS.find(p => normPhone(p.phone) === ph); user = {name:f ? f.contact : '', phone:ph, priv:false}; }
+}
+function escH(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
+
+function renderSiteChip(){
+  const el = document.getElementById('siteChip');
+  if(!el) return;
+  el.innerHTML = currentSite
+    ? '<div>פרויקט: <b>' + escH(currentSite.name) + '</b></div><span class="sw">החלף פרויקט ›</span>'
+    : '';
+  renderPendingBar();
+}
+function entryLogo(){
+  const logo = document.querySelector('.brand-logo');
+  return logo ? `<img src="${logo.src}" alt="" style="height:38px;">` : '';
+}
+function projectCards(term){
+  const t = (term || '').trim();
+  const list = myProjects().filter(s => !t || s.name.includes(t) || s.client.includes(t) || s.contact.includes(t));
+  return list.map(s => `
+    <div class="site-card" onclick="selectSite('${s.id}')">
+      <div class="sn">${escH(s.name)}</div>
+      <div class="sc">${escH(s.client)} · ${escH(s.contact)}</div>
+    </div>`).join('') || '<div class="sub" style="color:var(--ink-soft); font-size:13px;">לא נמצאו פרויקטים</div>';
+}
+function filterProjects(v){ document.getElementById('projList').innerHTML = projectCards(v); }
+function showEntry(){
+  const box = document.getElementById('entryIn');
+  if(!mgrPhone){
+    box.innerHTML = `
+      ${entryLogo()}
+      <h1>כניסה</h1>
+      <p class="sub">הקלד את מספר הנייד שלך. מנהל פרויקט רואה ומזמין רק עבור הפרויקטים שלו.</p>
+      <input id="lg-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="מספר נייד, למשל 0501234567" onkeydown="if(event.key==='Enter') doLogin()">
+      <div id="lg-err" style="color:var(--urgent); font-size:12.5px; margin-top:8px; min-height:18px;"></div>
+      <button class="send-btn" style="margin-top:6px;" onclick="doLogin()">כניסה</button>
+      <p class="sub" style="margin-top:16px;">הזמנת חומר מתבצעת דרך שרון: ההזמנה נשלחת אליה בווצאפ והיא מעבירה אותה לספק. הזמנה מעל ₪${fmtN(APPROVAL_LIMIT)} דורשת אישור של ${APPROVER.name}.</p>`;
+  } else {
+    box.innerHTML = `
+      ${entryLogo()}
+      <h1>שלום ${escH(user ? user.name : '')}</h1>
+      <p class="sub">${user && user.priv ? 'בחר את הפרויקט שעבורו אתה מזמין:' : 'בחר את הפרויקט שעבורו אתה מזמין:'}</p>
+      ${user && user.priv ? '<input id="pj-search" placeholder="חיפוש פרויקט, חברה או מנהל" oninput="filterProjects(this.value)" style="margin-bottom:10px;">' : ''}
+      <div id="projList">${projectCards('')}</div>
+      <div style="text-align:center; margin-top:14px;"><a onclick="logout()" style="color:var(--pipe-blue); font-weight:700; font-size:13px; cursor:pointer;">לא אתה? החלף משתמש</a></div>`;
+  }
+  document.getElementById('entry').classList.add('open');
+  window.scrollTo(0, 0);
+}
+function doLogin(){
+  const d = normPhone(document.getElementById('lg-phone').value);
+  if(!isKnown(d)){
+    document.getElementById('lg-err').textContent = 'המספר לא נמצא ברשימה. פנה לרכש.';
+    return;
+  }
+  setUser(d);
+  lsSet('mgrPhone', d);
+  loadPending();
+  const list = myProjects();
+  if(!user.priv && list.length === 1) selectSite(list[0].id); else showEntry();
+}
+function selectSite(id){
+  const s = myProjects().find(x => x.id === id);
+  if(!s) return;
+  currentSite = {id:s.id, name:s.name, address:'', contact:s.contact, phone:s.phone, client:s.client};
+  lsSet('projId', id);
+  document.getElementById('entry').classList.remove('open');
+  renderSiteChip();
+}
+function logout(){
+  mgrPhone = null; user = null; currentSite = null; pending = null;
+  lsDel('mgrPhone'); lsDel('projId');
+  renderSiteChip();
+  showEntry();
+}
+function initSite(){
+  const ph = lsGet('mgrPhone');
+  if(ph && isKnown(ph)) setUser(ph);
+  if(mgrPhone){
+    loadPending();
+    const mine = myProjects();
+    const id = lsGet('projId');
+    const s = mine.find(x => x.id === id) || (!user.priv && mine.length === 1 ? mine[0] : null);
+    if(s){ selectSite(s.id); return; }
+  }
+  showEntry();
+}
+
+// ===== בניית הודעות =====
 // הודעה נקייה לכל ספק: בלי מחירים, בלי סכומים, בלי שמות ספקים אחרים — שרון מעבירה אותה כמו שהיא
 function buildOrders(){
   const ids = Object.keys(cart).filter(id => cart[id] > 0);
@@ -617,37 +937,54 @@ function buildOrders(){
   ids.forEach(id => {
     const p = findProduct(id);
     const sup = useMode === 'single' ? cmp.bestSingle : cheapestSupplier(p.prices);
-    (groups[sup] = groups[sup] || []).push({p, qty: cart[id]});
+    (groups[sup] = groups[sup] || []).push({p, qty: cart[id], price: p.prices[sup]});
   });
   return Object.keys(groups).map(sup => {
     const L = [];
     L.push('*הזמנת חומרים — ט.ש. מי רון*');
     L.push('ספק: ' + SUPPLIERS[sup].name);
     L.push('תאריך: ' + new Date().toLocaleDateString('he-IL'));
-    if(orderNote.trim()) L.push('אתר אספקה: ' + orderNote.trim());
+    L.push('פרויקט: ' + currentSite.name);
+    L.push('איש קשר: ' + currentSite.contact + ' | טלפון: ' + currentSite.phone);
     L.push('');
     groups[sup].forEach(it => {
       const sku = it.p.sku ? ' | מק״ט ' + it.p.sku : '';
       L.push('• ' + it.p.name + sku + ' — *' + it.qty + ' ' + it.p.unit + '*');
     });
-    return {sup, name: SUPPLIERS[sup].name, count: groups[sup].length, text: L.join('\n'), done: false};
+    const sub = groups[sup].reduce((a, it) => a + it.price * it.qty, 0);
+    return {sup, name: SUPPLIERS[sup].name, count: groups[sup].length, text: L.join('\n'), sub, done: false};
   });
 }
+function buildApprovalText(orders){
+  const net = orders.reduce((a, o) => a + o.sub, 0);
+  const total = net * 1.18;
+  const L = [];
+  L.push('*בקשת אישור הזמנה — מעל ₪' + fmtN(APPROVAL_LIMIT) + '*');
+  L.push('פרויקט: ' + currentSite.name);
+  L.push('הוזמן על ידי: ' + user.name + ' (' + user.phone + ')');
+  L.push('סכום: ₪' + fmtN(net) + ' לפני מע״מ | ₪' + fmtN(total) + ' כולל מע״מ');
+  orders.forEach(o => {
+    const lines = o.text.split('\n');
+    const items = lines.slice(lines.indexOf('') + 1);
+    L.push('');
+    L.push('*' + o.name + '* — ₪' + fmtN(o.sub));
+    items.forEach(x => L.push(x));
+  });
+  L.push('');
+  L.push('לאישור: השב "אושר" והמזמין ישלח את ההזמנה לשרון.');
+  return L.join('\n');
+}
 
-function waUrl(text){
+// ===== שליחה בווצאפ =====
+function waUrl(text, num){
   let t = text;
   const MAXC = 3000;
   if(t.length > MAXC){
-    t = t.slice(0, MAXC).replace(/\n[^\n]*$/, '') + '\n… ההזמנה ארוכה — הפירוט המלא הועתק, הדבק אותו כאן';
+    t = t.slice(0, MAXC).replace(/\n[^\n]*$/, '') + '\n… ההודעה ארוכה — הפירוט המלא הועתק, הדבק אותו כאן';
   }
-  const base = SHARON_WHATSAPP ? 'https://wa.me/' + SHARON_WHATSAPP : 'https://wa.me/';
-  return base + '?text=' + encodeURIComponent(t);
+  return 'https://wa.me/' + num + '?text=' + encodeURIComponent(t);
 }
-
-function openWA(i){
-  const o = lastOrders[i];
-  if(!o) return;
-  try{ if(navigator.clipboard) navigator.clipboard.writeText(o.text); }catch(e){}
+function openLink(url){
   let link = document.getElementById('waTrigger');
   if(!link){
     link = document.createElement('a');
@@ -655,21 +992,17 @@ function openWA(i){
     link.style.display = 'none';
     document.body.appendChild(link);
   }
-  link.href = waUrl(o.text);
+  link.href = url;
   link.click();
-  o.done = true;
-  renderOrderList();
 }
-
-function copyOrder(i){
-  const o = lastOrders[i];
-  if(!o) return;
-  const ok = () => showToast('הועתק! הדבק בווצאפ לשרון');
+function clip(text){ try{ if(navigator.clipboard) navigator.clipboard.writeText(text); }catch(e){} }
+function copyText(text){
+  const ok = () => showToast('הועתק! הדבק בווצאפ');
   try{
-    navigator.clipboard.writeText(o.text).then(ok);
+    navigator.clipboard.writeText(text).then(ok);
   }catch(e){
     const ta = document.createElement('textarea');
-    ta.value = o.text;
+    ta.value = text;
     document.body.appendChild(ta);
     ta.select();
     document.execCommand('copy');
@@ -678,29 +1011,141 @@ function copyOrder(i){
   }
 }
 
+let lastOrders = [];
+function openWA(i){
+  const o = lastOrders[i];
+  if(!o) return;
+  clip(o.text);
+  openLink(waUrl(o.text, SHARON_WHATSAPP));
+  o.done = true;
+  checkFinished();
+  renderOrderList();
+}
+function checkFinished(){
+  if(!pending) return;
+  if(pending.approved && pending.note && pending.note.done && pending.orders.every(x => x.done)){
+    pending.finished = true;
+    savePending();
+    showToast('ההזמנה נשלחה לשרון ✓');
+  } else { savePending(); }
+}
+function openNote(){
+  if(!pending || !pending.note) return;
+  clip(pending.note.text);
+  openLink(waUrl(pending.note.text, SHARON_WHATSAPP));
+  pending.note.done = true;
+  checkFinished();
+  renderOrderList();
+}
+function copyOrder(i){ const o = lastOrders[i]; if(o) copyText(o.text); }
+
+// ===== אישור של טל =====
+function loadPending(){
+  pending = null;
+  try{
+    const p = JSON.parse(lsGet('pendingOrder') || 'null');
+    if(p && p.by === mgrPhone && !p.finished) pending = p;
+  }catch(e){}
+  renderPendingBar();
+}
+function savePending(){
+  if(pending && !pending.finished) lsSet('pendingOrder', JSON.stringify(pending)); else lsDel('pendingOrder');
+  renderPendingBar();
+}
+function renderPendingBar(){
+  const el = document.getElementById('pendingBar');
+  if(!el) return;
+  if(pending && !pending.finished){
+    el.style.display = 'flex';
+    el.innerHTML = '<div>⏳ הזמנה ממתינה לאישור ' + APPROVER.name + ': <b>' + escH(pending.siteName) + '</b></div><span class="sw">פתח ›</span>';
+  } else {
+    el.style.display = 'none';
+    el.innerHTML = '';
+  }
+}
+function openApprovalWA(){
+  if(!pending) return;
+  clip(pending.approvalText);
+  openLink(waUrl(pending.approvalText, APPROVER.whatsapp));
+  pending.approvalSent = true;
+  savePending();
+  renderOrderList();
+}
+function markApproved(){
+  if(!pending) return;
+  pending.approved = true;
+  pending.note = { done: false, text: '*אישור הזמנה*\nההזמנה לפרויקט ' + pending.siteName + ' אושרה על ידי ' + APPROVER.name + '.\nההודעות הבאות מוכנות להעברה לספקים.' };
+  lastOrders = pending.orders;
+  savePending();
+  renderOrderList();
+}
+
 function sendOrder(){
+  if(!currentSite || !user){ closeCart(); showEntry(); return; }
   const orders = buildOrders();
   if(orders.length === 0){ showToast('העגלה ריקה'); return; }
+  const total = orders.reduce((a, o) => a + o.sub, 0) * 1.18;
+  if(needsApproval(total)){
+    pending = { by: mgrPhone, siteName: currentSite.name, total, orders, approvalText: buildApprovalText(orders), approvalSent: false, approved: false, finished: false };
+    savePending();
+    closeCart();
+    showFallbackPanel();
+    openApprovalWA();
+    return;
+  }
+  pending = null; savePending();
   lastOrders = orders;
   closeCart();
   showFallbackPanel();
   if(orders.length === 1) openWA(0);
 }
 
-function renderOrderList(){
-  const intro = document.getElementById('orderIntro');
-  const list = document.getElementById('orderList');
-  intro.textContent = lastOrders.length > 1
-    ? 'ההזמנה מפוצלת לפי ספק. שלח כל הודעה בנפרד — שרון מעבירה כל אחת לספק כמו שהיא, בלי לערוך.'
-    : 'ההודעה נפתחה בווצאפ. אם לא נפתחה, לחץ על הכפתור.';
-  list.innerHTML = lastOrders.map((o, i) => `
+function orderCardHtml(o, i){
+  return `
     <div style="background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px;">
       <div style="font-weight:700; font-size:14px;">${o.name} <span style="font-weight:500; color:var(--ink-soft); font-size:12.5px;">· ${o.count} פריטים</span></div>
       <button class="send-btn" onclick="openWA(${i})" style="margin-top:10px; ${o.done ? 'background:var(--success);' : ''}">${o.done ? 'נשלח ✓ — לחץ לשליחה חוזרת' : 'שלח לשרון בווצאפ'}</button>
       <button onclick="copyOrder(${i})" style="width:100%; margin-top:8px; padding:10px; border:1px solid var(--line); border-radius:10px; background:transparent; color:var(--ink); font-family:'Assistant',sans-serif; font-size:13px; font-weight:600; cursor:pointer;">העתקת ההודעה</button>
-    </div>`).join('');
+    </div>`;
 }
-
+function renderOrderList(){
+  const intro = document.getElementById('orderIntro');
+  const list = document.getElementById('orderList');
+  if(pending && !pending.finished){
+    const p = pending;
+    intro.innerHTML = 'ההזמנה על סך <b>₪' + fmtN(p.total) + '</b> (כולל מע״מ) מעל המגבלה של ₪' + fmtN(APPROVAL_LIMIT) + ' — נדרש אישור של ' + APPROVER.name + ' לפני שליחה לשרון.';
+    let html = `
+      <div style="background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px;">
+        <div style="font-weight:700; font-size:14px;">שלב 1 — בקשת אישור מ${APPROVER.name}</div>
+        <button class="send-btn" onclick="openApprovalWA()" style="margin-top:10px; ${p.approvalSent ? 'background:var(--success);' : ''}">${p.approvalSent ? 'נשלח ✓ — לחץ לשליחה חוזרת' : 'שלח ל' + APPROVER.name + ' בווצאפ'}</button>
+        <button onclick="copyText(pending.approvalText)" style="width:100%; margin-top:8px; padding:10px; border:1px solid var(--line); border-radius:10px; background:transparent; color:var(--ink); font-family:'Assistant',sans-serif; font-size:13px; font-weight:600; cursor:pointer;">העתקת ההודעה</button>
+      </div>`;
+    if(p.approvalSent && !p.approved){
+      html += `
+      <div style="background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px;">
+        <div style="font-weight:700; font-size:14px;">שלב 2 — אחרי ש${APPROVER.name} אישר</div>
+        <div style="font-size:12.5px; color:var(--ink-soft); margin-top:4px;">המתן לתשובה שלו בווצאפ. כשהוא מאשר, לחץ:</div>
+        <button class="send-btn" onclick="markApproved()" style="margin-top:10px;">${APPROVER.name} אישר ✓ — המשך לשליחה לשרון</button>
+      </div>`;
+    }
+    if(p.approved){
+      lastOrders = p.orders;
+      html += `<div style="font-weight:700; font-size:14px; margin:12px 0 8px;">שלב 3 — שליחה לשרון</div>
+      <div style="background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px;">
+        <div style="font-weight:700; font-size:14px;">הודעת אישור לשרון</div>
+        <div style="font-size:12.5px; color:var(--ink-soft); margin-top:4px;">הודעה קצרה שמיידעת אותה שהאישור התקבל. היא לא מיועדת לספק.</div>
+        <button class="send-btn" onclick="openNote()" style="margin-top:10px; ${p.note && p.note.done ? 'background:var(--success);' : ''}">${p.note && p.note.done ? 'נשלח ✓ — לחץ לשליחה חוזרת' : 'שלח לשרון בווצאפ'}</button>
+      </div>
+      <div style="font-weight:700; font-size:13px; margin:6px 0 8px;">הודעות לספקים (כל ספק בהודעה נפרדת, בלי עריכה):</div>` + p.orders.map(orderCardHtml).join('');
+    }
+    list.innerHTML = html;
+    return;
+  }
+  intro.textContent = lastOrders.length > 1
+    ? 'ההזמנה מפוצלת לפי ספק. שלח כל הודעה בנפרד — שרון מעבירה כל אחת לספק כמו שהיא, בלי לערוך.'
+    : 'ההודעה נפתחה בווצאפ. אם לא נפתחה, לחץ על הכפתור.';
+  list.innerHTML = lastOrders.map(orderCardHtml).join('');
+}
 function showFallbackPanel(){
   renderOrderList();
   document.getElementById('fallbackPanel').classList.add('open');
@@ -722,6 +1167,7 @@ function showToast(msg){
 
 renderTabs();
 renderGrid();
+initSite();
 </script>
 </body>
 </html>
