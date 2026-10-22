@@ -679,7 +679,7 @@ function renderCart(){
   </div>
   ${currentSite ? `<div style="margin-top:14px; background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:12.5px; line-height:1.6;">
     <div style="font-weight:700; font-size:13.5px;">${escH(currentSite.name)}</div>
-    <div>איש קשר: ${escH(currentSite.contact)} · ${escH(currentSite.phone)}</div>
+    ${currentSite.contacts.map(c => `<div>איש קשר: ${escH(c.name)} · ${escH(c.phone)}</div>`).join('')}
     <div style="margin-top:4px;"><a onclick="closeCart(); showEntry();" style="color:var(--pipe-blue); font-weight:700; cursor:pointer;">החלף פרויקט</a></div>
   </div>` : ''}
   ${needsApproval(total) ? `<div style="margin-top:10px; padding:10px 12px; border:1px solid var(--copper); background:var(--copper-bg); border-radius:10px; font-size:12.5px; line-height:1.5;"><b>ההזמנה מעל ₪${fmtN(APPROVAL_LIMIT)} (כולל מע״מ) — נדרש אישור של ${APPROVER.name}.</b><br>קודם נשלחת אליו בקשת אישור, ורק אחרי שהוא מאשר אפשר לשלוח לשרון.</div>` : ''}
@@ -714,12 +714,17 @@ function closeCart(){
 }
 const SHARON_WHATSAPP = '972528633259';
 // ===== משתמשים, פרויקטים ואישורים =====
-// מורשים להזמין לכל הפרויקט: מג׳ד, דוד, טל ושרון. מנהלי פרויקט רואים רק את הפרויקטים של המספר שלהם.
+// מורשים להזמין לכל הפרויקטים: דוד, טל ושרון. מנהלי פרויקט רואים רק את הפרויקטים של המספר שלהם.
 const PRIV = [
   { name:'דוד',  phone:'0504560060' },
   { name:'טל',   phone:'0524672267' },
-  { name:'מג׳ד', phone:'0504344228' },
   { name:'שרון', phone:'0528633259' }
+];
+// מורשים לפרויקטים מסוימים בלבד (מזהים פרויקט מתוך הרשימה המטה)
+const RESTRICTED = [
+  { name:'מג׳ד',  phone:'0504344228', projects:['p12', 'p9', 'p1', 'p18'] },   // הולצברג, קרסו, עץ החיים, שנקר
+  { name:'איתי',  phone:'0522343636', projects:['p25'] },                       // מאז"ה
+  { name:'ליאור', phone:'0549733448', projects:['p6', 'p10'] }                 // הרצל 66, עצמאות 28
 ];
 const APPROVER = { name:'טל', phone:'0524672267', whatsapp:'972524672267' };
 const APPROVAL_LIMIT = 10000;   // הזמנה שסכומה (כולל מע״מ) גבוה מזה — דורשת אישור של טל
@@ -744,8 +749,8 @@ const PROJECTS = [
  {
   "id": "p3",
   "client": "אשטרום הנדסה",
-  "contact": "יזיד אבו שריף",
-  "phone": "0549175856",
+  "contact": "ראובן כהן",
+  "phone": "0542228217",
   "name": "מרים החשמונאית"
  },
  {
@@ -767,6 +772,7 @@ const PROJECTS = [
   "client": "קבוצת אשטרום",
   "contact": "יער",
   "phone": "0542580699",
+  "also": [{"name": "ליאור", "phone": "0549733448"}],
   "name": "הרצל 66 בת ים"
  },
  {
@@ -795,6 +801,7 @@ const PROJECTS = [
   "client": "לוינשטין נתיב",
   "contact": "יער",
   "phone": "0542580699",
+  "also": [{"name": "ליאור", "phone": "0549733448"}],
   "name": "עצמאות 28 בת ים לוינשטיין"
  },
  {
@@ -807,8 +814,8 @@ const PROJECTS = [
  {
   "id": "p12",
   "client": "דניה",
-  "contact": "איתי",
-  "phone": "0522343636",
+  "contact": "מג׳ד",
+  "phone": "0504344228",
   "name": "הולצברג בת ים דניה"
  },
  {
@@ -849,8 +856,8 @@ const PROJECTS = [
  {
   "id": "p18",
   "client": "דניה",
-  "contact": "איתי",
-  "phone": "0522343636",
+  "contact": "מג׳ד",
+  "phone": "0504344228",
   "name": "שנקר חולון"
  },
  {
@@ -909,15 +916,22 @@ let currentSite = null;
 let pending = null;       // הזמנה שממתינה לאישור של טל
 function normPhone(s){ let d = String(s || '').replace(/\D/g, ''); if(d.startsWith('972')) d = '0' + d.slice(3); return d; }
 function privOf(ph){ return PRIV.find(p => normPhone(p.phone) === ph); }
-function isKnown(ph){ return ph.length >= 9 && (!!privOf(ph) || PROJECTS.some(p => normPhone(p.phone) === ph)); }
+function restrOf(ph){ return RESTRICTED.find(r => normPhone(r.phone) === ph); }
+function isKnown(ph){ return ph.length >= 9 && (!!privOf(ph) || !!restrOf(ph) || PROJECTS.some(p => normPhone(p.phone) === ph)); }
 function myProjects(){
   if(!mgrPhone) return [];
-  return privOf(mgrPhone) ? PROJECTS.slice() : PROJECTS.filter(p => normPhone(p.phone) === mgrPhone);
+  if(privOf(mgrPhone)) return PROJECTS.slice();
+  const own = PROJECTS.filter(p => normPhone(p.phone) === mgrPhone);
+  const r = restrOf(mgrPhone);
+  if(!r) return own;
+  return own.concat(PROJECTS.filter(p => r.projects.includes(p.id) && !own.includes(p)));
 }
 function setUser(ph){
   mgrPhone = ph;
   const pv = privOf(ph);
+  const rs = restrOf(ph);
   if(pv) user = {name:pv.name, phone:ph, priv:true};
+  else if(rs) user = {name:rs.name, phone:ph, priv:false};
   else { const f = PROJECTS.find(p => normPhone(p.phone) === ph); user = {name:f ? f.contact : '', phone:ph, priv:false}; }
 }
 function escH(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -985,7 +999,7 @@ function doLogin(){
 function selectSite(id){
   const s = myProjects().find(x => x.id === id);
   if(!s) return;
-  currentSite = {id:s.id, name:s.name, address:'', contact:s.contact, phone:s.phone, client:s.client};
+  currentSite = {id:s.id, name:s.name, address:'', contact:s.contact, phone:s.phone, client:s.client, contacts:[{name:s.contact, phone:s.phone}].concat(s.also || [])};
   lsSet('projId', id);
   document.getElementById('entry').classList.remove('open');
   loadCart();
@@ -1031,7 +1045,7 @@ function buildOrders(){
     L.push('ספק: ' + SUPPLIERS[sup].name);
     L.push('תאריך: ' + new Date().toLocaleDateString('he-IL'));
     L.push('פרויקט: ' + currentSite.name);
-    L.push('איש קשר: ' + currentSite.contact + ' | טלפון: ' + currentSite.phone);
+    currentSite.contacts.forEach(c => L.push('איש קשר: ' + c.name + ' | טלפון: ' + c.phone));
     L.push('');
     groups[sup].forEach(it => {
       const sku = it.p.sku ? ' | מק״ט ' + it.p.sku : '';
