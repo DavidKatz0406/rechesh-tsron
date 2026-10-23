@@ -427,6 +427,7 @@ function cartFooterHtml(withClear){
 }
 function cancelPending(){
   if(!confirm('לבטל את בקשת האישור? הפריטים יישארו בעגלה.')) return;
+  if(pending && pending.orders[0] && pending.orders[0].oid) logEvent({t:'cancelled', oid:pending.orders[0].oid, at:Date.now()});
   pending = null;
   savePending();
   closeFallback();
@@ -711,6 +712,34 @@ function openCart(){
 function closeCart(){
   document.getElementById('overlay').classList.remove('open');
   document.getElementById('drawer').classList.remove('open');
+}
+// ===== יומן הזמנות מרכזי (גיליון Google דרך Apps Script) =====
+// אחרי הפריסה של הסקריפט מדביקים כאן את כתובת "אפליקציית האינטרנט". כל עוד זה ריק — אין רישום.
+const LOG_URL = 'https://script.google.com/macros/s/AKfycbz9ylijHc1QFxPMXzKv0bD-zwniJ2AlKmAv5SIDoifpy_NTU2hqSTAMPj3Uzs01AI4mkg/exec';
+let logFlushing = false;
+function logEvent(ev){
+  if(!LOG_URL) return;
+  try{
+    const q = JSON.parse(lsGet('logQueue') || '[]');
+    q.push(ev);
+    lsSet('logQueue', JSON.stringify(q.slice(-300)));
+  }catch(e){}
+  flushLog();
+}
+async function flushLog(){
+  if(!LOG_URL || logFlushing) return;
+  logFlushing = true;
+  try{
+    while(true){
+      const q = JSON.parse(lsGet('logQueue') || '[]');      // קוראים מחדש בכל סיבוב: אירועים חדשים שנוספו תוך כדי שליחה לא ילכו לאיבוד
+      if(!q.length) break;
+      await fetch(LOG_URL, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(q[0]), keepalive:true});
+      const cur = JSON.parse(lsGet('logQueue') || '[]');
+      cur.shift();
+      lsSet('logQueue', JSON.stringify(cur));
+    }
+  }catch(e){}
+  logFlushing = false;
 }
 const SHARON_WHATSAPP = '972528633259';
 // ===== משתמשים, פרויקטים ואישורים =====
@@ -1118,6 +1147,7 @@ function openWA(i){
   clip(o.text);
   openLink(waUrl(o.text, SHARON_WHATSAPP));
   o.done = true;
+  if(o.rowId) logEvent({t:'sent', rowId:o.rowId, at:Date.now()});
   removeSent(o);
   saveLast();
   checkFinished();
@@ -1169,6 +1199,7 @@ function openApprovalWA(){
   if(!pending) return;
   clip(pending.approvalText);
   openLink(waUrl(pending.approvalText, APPROVER.whatsapp));
+  if(!pending.approvalSent && pending.orders[0] && pending.orders[0].oid) logEvent({t:'approval_requested', oid:pending.orders[0].oid, at:Date.now()});
   pending.approvalSent = true;
   savePending();
   renderOrderList();
@@ -1176,6 +1207,7 @@ function openApprovalWA(){
 function markApproved(){
   if(!pending) return;
   pending.approved = true;
+  if(pending.orders[0] && pending.orders[0].oid) logEvent({t:'approved', oid:pending.orders[0].oid, at:Date.now()});
   pending.note = { done: false, text: '*אישור הזמנה*\nההזמנה לפרויקט ' + pending.siteName + ' אושרה על ידי ' + APPROVER.name + '.\nההודעות הבאות מוכנות להעברה לספקים.' };
   lastOrders = pending.orders;
   savePending();
@@ -1188,6 +1220,15 @@ function sendOrder(){
   const orders = buildOrders();
   if(orders.length === 0){ showToast('העגלה ריקה'); return; }
   const total = orders.reduce((a, o) => a + o.sub, 0) * 1.18;
+  const oid = 'O' + Date.now().toString(36).toUpperCase();
+  orders.forEach((o, i) => {
+    const ls = o.text.split('\n');
+    o.oid = oid; o.rowId = oid + '-' + (i + 1);
+    o.items = ls.slice(ls.indexOf('') + 1).join('\n').replace(/\*/g, '');
+  });
+  logEvent({t:'order', oid, user:{name:user.name, phone:user.phone}, project:currentSite.name,
+    total:Math.round(total * 100) / 100, needsApproval:needsApproval(total),
+    rows:orders.map(o => ({id:o.rowId, supplier:o.name, items:o.items, sub:Math.round(o.sub * 100) / 100})), at:Date.now()});
   if(needsApproval(total)){
     pending = { by: mgrPhone, siteName: currentSite.name, total, orders, approvalText: buildApprovalText(orders), approvalSent: false, approved: false, finished: false };
     savePending();
@@ -1273,6 +1314,7 @@ function showToast(msg){
 renderTabs();
 renderGrid();
 initSite();
+flushLog();
 </script>
 </body>
 </html>
