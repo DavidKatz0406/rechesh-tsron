@@ -264,6 +264,7 @@
 
   <div class="site-chip" id="siteChip" onclick="showEntry()"></div>
   <div class="site-chip" id="pendingBar" onclick="showFallbackPanel()" style="display:none; background:var(--copper-bg); border-color:var(--copper);"></div>
+  <div class="site-chip" id="myOrdersBar" onclick="openMyOrders()" style="display:none;"></div>
   <div class="intro">כל עובד יכול להזמין ישירות מהקטלוג. <b>המחיר הזול ביותר</b> מסומן אוטומטית בכל פריט.</div>
 
   <div class="tabs" id="tabs"></div>
@@ -271,7 +272,7 @@
 
 </div>
 
-<div class="overlay" id="overlay" onclick="closeCart(); closeFallback();"></div>
+<div class="overlay" id="overlay" onclick="closeCart(); closeFallback(); closeOrders();"></div>
 <div class="drawer" id="drawer">
   <div class="drawer-head">
     <h2>עגלת ההזמנה</h2>
@@ -281,6 +282,17 @@
 </div>
 
 <div id="entry"><div class="entry-in" id="entryIn"></div></div>
+
+<div class="drawer" id="ordersPanel">
+  <div class="drawer-head">
+    <h2>ההזמנות שלי</h2>
+    <button class="drawer-close" onclick="closeOrders()">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">המצב מתעדכן אחרי ששרון מעבירה את ההזמנה לספק, וכולל את הספק שממנו יגיע החומר.</div>
+    <div id="ordersList"></div>
+  </div>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -975,6 +987,7 @@ function renderSiteChip(){
     ? '<div>פרויקט: <b>' + escH(currentSite.name) + '</b></div><span class="sw">החלף פרויקט ›</span>'
     : '';
   renderPendingBar();
+  renderMyOrdersBar();
 }
 function entryLogo(){
   const logo = document.querySelector('.brand-logo');
@@ -1033,6 +1046,7 @@ function selectSite(id){
   document.getElementById('entry').classList.remove('open');
   loadCart();
   renderSiteChip();
+  fetchMyOrders();
 }
 function logout(){
   mgrPhone = null; user = null; currentSite = null; pending = null;
@@ -1071,7 +1085,6 @@ function buildOrders(){
   return Object.keys(groups).map(sup => {
     const L = [];
     L.push('*הזמנת חומרים — ט.ש. מי רון*');
-    L.push('ספק: ' + SUPPLIERS[sup].name);
     L.push('תאריך: ' + new Date().toLocaleDateString('he-IL'));
     L.push('פרויקט: ' + currentSite.name);
     currentSite.contacts.forEach(c => L.push('איש קשר: ' + c.name + ' | טלפון: ' + c.phone));
@@ -1290,6 +1303,7 @@ function renderOrderList(){
   intro.textContent = lastOrders.length > 1
     ? 'ההזמנה מפוצלת לפי ספק. שלח כל הודעה בנפרד — שרון מעבירה כל אחת לספק כמו שהיא, בלי לערוך.'
     : 'ההודעה נפתחה בווצאפ. אם לא נפתחה, לחץ על הכפתור.';
+  intro.textContent += LOG_URL ? ' אחרי ששרון תעביר את ההזמנה לספק, המצב והספק שממנו יגיע החומר יופיעו ב"ההזמנות שלי" בדף הראשי.' : '';
   list.innerHTML = lastOrders.map(orderCardHtml).join('');
 }
 function showFallbackPanel(){
@@ -1301,6 +1315,67 @@ function closeFallback(){
   document.getElementById('fallbackPanel').classList.remove('open');
   document.getElementById('overlay').classList.remove('open');
 }
+
+// ===== "ההזמנות שלי": מצב ההזמנות מתוך היומן, כולל הספק שממנו יגיע החומר =====
+let myOrders = [];
+function seenFwd(){ try{ return new Set(JSON.parse(lsGet('seenFwd:' + mgrPhone) || '[]')); }catch(e){ return new Set(); } }
+function newForwarded(){ const s = seenFwd(); return myOrders.filter(o => o.stage === 'forwarded' && !s.has(o.id)); }
+async function fetchMyOrders(){
+  if(!LOG_URL || !user) return;
+  try{
+    const r = await fetch(LOG_URL + '?action=status&phone=' + encodeURIComponent(user.phone));
+    const j = await r.json();
+    myOrders = Array.isArray(j.orders) ? j.orders : [];
+  }catch(e){ return; }
+  renderMyOrdersBar();
+  const p = document.getElementById('ordersPanel');
+  if(p && p.classList.contains('open')) renderMyOrders();
+}
+function renderMyOrdersBar(){
+  const el = document.getElementById('myOrdersBar');
+  if(!el) return;
+  if(!LOG_URL || !user){ el.style.display = 'none'; el.innerHTML = ''; return; }
+  const n = newForwarded().length;
+  el.style.display = 'flex';
+  el.innerHTML = '<div>📦 ההזמנות שלי' + (n ? ' · <b style="color:var(--success)">' + n + ' נקלטו</b>' : '') + '</div><span class="sw">פתח ›</span>';
+}
+function fmtDT(ms){
+  const d = new Date(ms);
+  return d.toLocaleDateString('he-IL', {day:'2-digit', month:'2-digit'}) + ' ' + d.toLocaleTimeString('he-IL', {hour:'2-digit', minute:'2-digit'});
+}
+function renderMyOrders(){
+  const list = document.getElementById('ordersList');
+  if(!myOrders.length){ list.innerHTML = '<div class="empty-cart">אין הזמנות ב-45 הימים האחרונים.</div>'; return; }
+  const seen = seenFwd();
+  list.innerHTML = myOrders.map(o => {
+    let st, col;
+    if(o.stage === 'forwarded'){ st = '✓ נקלטה והועברה לספק. החומר יגיע מ-<b>' + escH(o.supplier) + '</b>'; col = 'var(--success)'; }
+    else if(o.stage === 'approval'){ st = '⏳ ממתינה לאישור של ' + APPROVER.name; col = 'var(--copper)'; }
+    else if(o.stage === 'cancelled'){ st = 'בוטלה'; col = 'var(--ink-soft)'; }
+    else { st = 'נשלחה לשרון, בטיפול'; col = 'var(--ink-soft)'; }
+    const isNew = o.stage === 'forwarded' && !seen.has(o.id);
+    return `<div style="background:var(--paper); border:1px solid ${isNew ? 'var(--success)' : 'var(--line)'}; border-radius:10px; padding:11px 12px; margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; gap:8px;"><b style="font-size:13.5px;">${escH(o.project)}</b><span style="font-size:11.5px; color:var(--ink-soft);">${fmtDT(o.created)}</span></div>
+      <div style="font-size:12.5px; margin-top:5px; color:${col}; line-height:1.45;">${st}${o.stage === 'forwarded' && o.at ? ' <span style="color:var(--ink-soft);">(' + fmtDT(o.at) + ')</span>' : ''}</div></div>`;
+  }).join('');
+}
+async function openMyOrders(){
+  document.getElementById('ordersPanel').classList.add('open');
+  document.getElementById('overlay').classList.add('open');
+  renderMyOrders();
+  await fetchMyOrders();
+  renderMyOrders();
+  const s = seenFwd();
+  myOrders.filter(o => o.stage === 'forwarded').forEach(o => s.add(o.id));
+  lsSet('seenFwd:' + mgrPhone, JSON.stringify([...s].slice(-300)));
+  renderMyOrdersBar();
+}
+function closeOrders(){
+  document.getElementById('ordersPanel').classList.remove('open');
+  document.getElementById('overlay').classList.remove('open');
+}
+document.addEventListener('visibilitychange', () => { if(!document.hidden){ fetchMyOrders(); flushLog(); } });
+setInterval(() => { if(!document.hidden) fetchMyOrders(); }, 120000);
 
 let toastTimer;
 function showToast(msg){
