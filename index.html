@@ -798,7 +798,7 @@ const PROJECTS = [
   "id": "p4",
   "client": "יעקבי יוניברסל",
   "contact": "סאמר",
-  "phone": "0524424500",
+  "phone": "0508128202",
   "name": "פרויקט לוד"
  },
  {
@@ -891,7 +891,7 @@ const PROJECTS = [
   "id": "p17",
   "client": "הר סוף",
   "contact": "סאמר",
-  "phone": "0524424500",
+  "phone": "0508128202",
   "name": "מגרש 504 גדרה"
  },
  {
@@ -949,6 +949,20 @@ const PROJECTS = [
   "contact": "באהה",
   "phone": "0527067565",
   "name": "מאז\"ה"
+ },
+ {
+  "id": "p26",
+  "client": "",
+  "contact": "סאמר",
+  "phone": "0508128202",
+  "name": "כרמי הנדיב"
+ },
+ {
+  "id": "p27",
+  "client": "רוטשטיין",
+  "contact": "סאמר",
+  "phone": "0508128202",
+  "name": "רוטשטיין לוד"
  }
 ];
 let mgrPhone = null;
@@ -999,7 +1013,7 @@ function projectCards(term){
   return list.map(s => `
     <div class="site-card" onclick="selectSite('${s.id}')">
       <div class="sn">${escH(s.name)}</div>
-      <div class="sc">${escH(s.client)} · ${escH(s.contact)}</div>
+      <div class="sc">${[s.client, s.contact].filter(Boolean).map(x => escH(x)).join(' · ')}</div>
     </div>`).join('') || '<div class="sub" style="color:var(--ink-soft); font-size:13px;">לא נמצאו פרויקטים</div>';
 }
 function filterProjects(v){ document.getElementById('projList').innerHTML = projectCards(v); }
