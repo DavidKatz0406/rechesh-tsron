@@ -285,7 +285,7 @@
 
 </div>
 
-<div class="overlay" id="overlay" onclick="closeCart(); closeFallback(); closeOrders(); closeFree(); closeChange();"></div>
+<div class="overlay" id="overlay" onclick="closeCart(); closeFallback(); closeOrders(); closeFree(); closeChange(); closeReceipt();"></div>
 <div class="drawer" id="drawer">
   <div class="drawer-head">
     <h2>עגלת ההזמנה</h2>
@@ -336,6 +336,14 @@
     <button class="send-btn" style="margin-top:12px;" onclick="sendChange()">שלח לשרון</button>
     <div style="font-size:11.5px; color:var(--ink-soft); text-align:center; margin-top:8px;">הבקשה נרשמת ביומן ונפתח ווצאפ לשרון עם ההודעה מוכנה.</div>
   </div>
+</div>
+
+<div class="drawer" id="rcvPanel">
+  <div class="drawer-head">
+    <h2>קבלת סחורה</h2>
+    <button class="drawer-close" onclick="closeReceipt()">✕</button>
+  </div>
+  <div class="drawer-body" id="rcvBody"></div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -784,7 +792,8 @@ function renderCart(){
   ${needsApproval(total) ? `<div style="margin-top:10px; padding:10px 12px; border:1px solid var(--copper); background:var(--copper-bg); border-radius:10px; font-size:12.5px; line-height:1.5;"><b>ההזמנה מעל ₪${fmtN(APPROVAL_LIMIT)} (כולל מע״מ) — נדרש אישור של ${APPROVER.name}.</b><br>קודם נשלחת אליו בקשת אישור, ורק אחרי שהוא מאשר אפשר לשלוח לשרון.</div>` : ''}
   ${budgetBoxHtml(total)}
   ${metaBoxHtml()}
-  <button class="send-btn" onclick="sendOrder()" style="margin-top:10px;">${needsApproval(total) ? 'שלח ל' + APPROVER.name + ' לאישור' : 'שליחה לשרון בווצאפ'}</button>
+  ${cutoffBoxHtml()}
+  <button class="send-btn" onclick="sendOrder()" ${ordersClosed() ? 'disabled' : ''} style="margin-top:10px;${ordersClosed() ? ' opacity:.45;' : ''}">${needsApproval(total) ? 'שלח ל' + APPROVER.name + ' לאישור' : 'שליחה לשרון בווצאפ'}</button>
   <div style="text-align:center; font-size:11px; color:var(--ink-soft); margin-top:8px;">ההודעה בלי מחירים, מוכנה להעברה לספק. הזמנה עם כמה ספקים נשלחת כהודעה נפרדת לכל ספק.</div>
   ${cartFooterHtml(true)}`;
 
@@ -808,6 +817,7 @@ function removeFromCart(id){
 function openCart(){
   renderCart();
   fetchSpend().then(() => { if(document.getElementById('drawer').classList.contains('open')) renderCart(); });
+  syncTime().then(() => { if(document.getElementById('drawer').classList.contains('open')) renderCart(); });
   document.getElementById('overlay').classList.add('open');
   document.getElementById('drawer').classList.add('open');
 }
@@ -843,7 +853,7 @@ async function flushLog(){
   }catch(e){}
   logFlushing = false;
 }
-const SHARON_WHATSAPP = '972528633259';
+const SHARON_WHATSAPP = '972524672267';   // יעד ההודעות שמסומנות "לשרון": כרגע המספר של טל (המספר של שרון: 972528633259)
 // ===== משתמשים, פרויקטים ואישורים =====
 // מורשים להזמין לכל הפרויקטים: דוד, טל ושרון. מנהלי פרויקט רואים רק את הפרויקטים של המספר שלהם.
 const PRIV = [
@@ -1348,6 +1358,7 @@ function markApproved(){
 
 function sendOrder(){
   if(!currentSite || !user){ closeCart(); showEntry(); return; }
+  if(ordersClosed()){ showToast('ההזמנות נסגרו להיום (10:30). העגלה נשמרת — אפשר לשלוח מחר.'); renderCart(); return; }
   if(pending && !pending.finished){ closeCart(); showFallbackPanel(); showToast('יש הזמנה שממתינה לאישור — השלם או בטל אותה'); return; }
   const orders = buildOrders();
   if(orders.length === 0){ showToast('העגלה ריקה'); return; }
@@ -1480,6 +1491,7 @@ function renderMyOrders(){
       <div style="display:flex; justify-content:space-between; gap:8px;"><b style="font-size:13.5px;">${escH(o.project)}</b><span style="font-size:11.5px; color:var(--ink-soft);">${fmtDT(o.created)}</span></div>
       <div style="font-size:12.5px; margin-top:5px; color:${col}; line-height:1.45;">${st}${o.stage === 'forwarded' && o.at ? ' <span style="color:var(--ink-soft);">(' + fmtDT(o.at) + ')</span>' : ''}</div>
       ${(o.req || lsGet('chgReq:' + o.id)) ? '<div style="font-size:12px; margin-top:6px; color:var(--copper); font-weight:700;">נשלחה בקשת שינוי / ביטול</div>' : ''}
+      ${receiptHtml(o)}
       ${o.stage !== 'cancelled' ? '<a onclick="openChange(\'' + escH(o.id) + '\')" style="display:inline-block; margin-top:7px; font-size:12px; font-weight:700; color:var(--pipe-blue); cursor:pointer;">בקש שינוי / ביטול</a>' : ''}</div>`;
   }).join('') + historyHtml();
 }
@@ -1498,7 +1510,7 @@ function closeOrders(){
   document.getElementById('ordersPanel').classList.remove('open');
   document.getElementById('overlay').classList.remove('open');
 }
-document.addEventListener('visibilitychange', () => { if(!document.hidden){ fetchMyOrders(); flushLog(); } });
+document.addEventListener('visibilitychange', () => { if(!document.hidden){ fetchMyOrders(); flushLog(); syncTime(); } });
 setInterval(() => { if(!document.hidden) fetchMyOrders(); }, 120000);
 
 // ===== פרטי אספקה, פריט חופשי, היסטוריה (הזמן שוב), אזהרת כפילות ופריטים נפוצים =====
@@ -1852,6 +1864,27 @@ const TR_DATA = [
 ['ואתה עכשיו בפרויקט','وأنت الآن في المشروع','а вы сейчас в проекте'],
 ['להוסיף את הפריטים לעגלה של הפרויקט הנוכחי?','هل تريد إضافة الأصناف إلى سلة المشروع الحالي؟','Добавить позиции в корзину текущего проекта?'],
 ['מ-','من ','от '],
+['ההזמנות נסגרו להיום (בכל יום עד 10:30). העגלה נשמרת, ואפשר לשלוח מחר.','أُغلقت الطلبات لهذا اليوم (كل يوم حتى 10:30). تبقى السلة محفوظة ويمكن الإرسال غدًا.','Приём заказов на сегодня закрыт (ежедневно до 10:30). Корзина сохраняется, отправить можно завтра.'],
+['ההזמנות נסגרות היום בשעה 10:30','تُغلق الطلبات اليوم الساعة 10:30','Приём заказов сегодня закрывается в 10:30'],
+['ההזמנות נסגרו להיום (10:30). העגלה נשמרת — אפשר לשלוח מחר.','أُغلقت الطلبات لليوم (10:30). السلة محفوظة — يمكن الإرسال غدًا.','Приём заказов на сегодня закрыт (10:30). Корзина сохранена — отправьте завтра.'],
+['קבלת סחורה / תעודת משלוח','استلام البضاعة / سند التسليم','Приёмка товара / накладная'],
+['קבלת סחורה','استلام البضاعة','Приёмка товара'],
+['✓ התקבל תקין','✓ تم الاستلام سليمًا','✓ принято без замечаний'],
+['⚠ חריגה בקבלה — בטיפול זיכוי','⚠ مخالفة في الاستلام — قيد معالجة الإشعار الدائن','⚠ расхождение при приёмке — оформляется кредит-нота'],
+['✓ החריגה טופלה — התקבל זיכוי','✓ عولجت المخالفة — تم استلام الإشعار الدائن','✓ расхождение урегулировано — кредит-нота получена'],
+['צלם את תעודת המשלוח. אם יש פער בין מה שהוזמן למה שהתקבל, יישלח אוטומטית דיווח להחזרה ולזיכוי.','صوّر سند التسليم. إذا كان هناك فرق بين المطلوب والمستلَم، يُرسَل تلقائيًا بلاغ للإرجاع والإشعار الدائن.','Сфотографируйте накладную. Если есть расхождение между заказанным и полученным, автоматически отправится сообщение о возврате и кредит-ноте.'],
+['מס׳ תעודת משלוח','رقم سند التسليم','Номер накладной'],
+['התקבל','المستلَم','Получено'],
+['הוזמן:','المطلوب:','Заказано:'],
+['פגום','تالف','Повреждено'],
+['+ פריט שהתקבל ולא הוזמן','+ صنف استُلم ولم يُطلب','+ Позиция получена, но не заказана'],
+['צילום תעודת המשלוח','تصوير سند التسليم','Фото накладной'],
+['לא התקבלה תעודת משלוח','لم يتم استلام سند تسليم','Накладная не получена'],
+['הערה לתעודה','ملاحظة على السند','Примечание к накладной'],
+['שלח קבלה','أرسل الاستلام','Отправить приёмку'],
+['צלם את תעודת המשלוח','صوّر سند التسليم','Сфотографируйте накладную'],
+['הקבלה נרשמה','تم تسجيل الاستلام','Приёмка зарегистрирована'],
+['שתף את תמונת התעודה בווצאפ','شارك صورة السند في واتساب','Поделиться фото накладной в WhatsApp'],
 ];
 
 // ===== שפות: עברית / ערבית / רוסית. מתרגם את הממשק בלבד; ההודעות לשרון ולספקים נשארות בעברית =====
@@ -1944,6 +1977,200 @@ function langPickerHtml(){
 const _confirmOrig = window.confirm.bind(window);
 window.confirm = m => _confirmOrig(trText(m, LANG));
 
+// ===== שעת סגירה יומית להזמנות (שעון ישראל) =====
+const CUTOFF = {h:10, m:30, s:0};
+const CUTOFF_EXEMPT = ['0504560060', '0524672267'];   // דוד וטל פטורים
+let timeOffset = 0;
+function nowMs(){ return Date.now() + timeOffset; }
+function ilSeconds(ms){
+  const parts = new Intl.DateTimeFormat('en-GB', {timeZone:'Asia/Jerusalem', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}).formatToParts(new Date(ms));
+  const g = {}; parts.forEach(p => { g[p.type] = parseInt(p.value, 10); });
+  return (g.hour % 24) * 3600 + g.minute * 60 + g.second;
+}
+function cutoffSeconds(){ return CUTOFF.h * 3600 + CUTOFF.m * 60 + CUTOFF.s; }
+function ordersClosed(){
+  if(user && CUTOFF_EXEMPT.includes(user.phone)) return false;
+  return ilSeconds(nowMs()) > cutoffSeconds();
+}
+async function syncTime(){
+  if(!LOG_URL) return;
+  try{
+    const t0 = Date.now();
+    const r = await fetch(LOG_URL + '?action=time');
+    const j = await r.json();
+    const t1 = Date.now();
+    if(typeof j.now === 'number') timeOffset = j.now - (t0 + t1) / 2;
+  }catch(e){}
+}
+function cutoffBoxHtml(){
+  if(user && CUTOFF_EXEMPT.includes(user.phone)) return '';
+  const left = cutoffSeconds() - ilSeconds(nowMs());
+  const box = 'margin-top:12px; padding:10px 12px; border-radius:10px; font-size:12.5px; line-height:1.5;';
+  if(left < 0) return `<div style="${box} border:1px solid var(--urgent); background:#FBE9E7;"><b>ההזמנות נסגרו להיום (בכל יום עד 10:30).</b> העגלה נשמרת, ואפשר לשלוח מחר.</div>`;
+  if(left <= 5400) return `<div style="${box} border:1px solid var(--copper); background:var(--copper-bg);">ההזמנות נסגרות היום בשעה 10:30 (עוד ${Math.max(1, Math.ceil(left / 60))} דק׳).</div>`;
+  return '';
+}
+
+// ===== קבלת סחורה: צילום תעודת משלוח, השוואה להזמנה, ודיווח על חריגים להחזרה וזיכוי =====
+let rcvRow = null, rcvOrder = null, rcvLines = [], rcvExtras = [], rcvPhotos = [];
+function parseItems(text){
+  return String(text || '').split('\n').map(l => l.trim()).filter(l => l.charAt(0) === '•').map(l => {
+    const m = l.match(/^•\s*(.*?)(?:\s*\|\s*מק״ט\s*\S+)?\s+—\s+(\d+(?:\.\d+)?)\s*(.*)$/);
+    return m ? {name: m[1].trim(), ordered: parseFloat(m[2]), unit: (m[3] || '').trim() || 'יח׳'} : null;
+  }).filter(Boolean);
+}
+function rcvStageOf(o){ return o.rcv || lsGet('rcv:' + o.id) || ''; }
+function receiptHtml(o){
+  const st = rcvStageOf(o);
+  if(st === 'ok') return '<div style="font-size:12px; margin-top:6px; color:var(--success); font-weight:700;">✓ התקבל תקין</div>';
+  if(st === 'exc') return '<div style="font-size:12px; margin-top:6px; color:var(--copper); font-weight:700;">⚠ חריגה בקבלה — בטיפול זיכוי</div>';
+  if(st === 'credited') return '<div style="font-size:12px; margin-top:6px; color:var(--success); font-weight:700;">✓ החריגה טופלה — התקבל זיכוי</div>';
+  if(o.stage === 'forwarded') return '<a onclick="openReceipt(\'' + escH(o.id) + '\')" style="display:inline-block; margin-top:7px; margin-inline-end:14px; font-size:12px; font-weight:700; color:var(--pipe-blue); cursor:pointer;">קבלת סחורה / תעודת משלוח</a>';
+  return '';
+}
+function rcvField(){ return 'width:100%; margin-top:6px; padding:9px; border:1px solid var(--line); border-radius:9px; font-family:inherit; font-size:13.5px; background:var(--paper); color:var(--ink);'; }
+function openReceipt(id){
+  const o = myOrders.find(x => x.id === id);
+  if(!o) return;
+  rcvRow = id; rcvOrder = o; rcvLines = parseItems(o.items); rcvExtras = []; rcvPhotos = [];
+  renderReceipt();
+  document.getElementById('rcvPanel').classList.add('open');
+  document.getElementById('overlay').classList.add('open');
+}
+function closeReceipt(){
+  document.getElementById('rcvPanel').classList.remove('open');
+  document.getElementById('overlay').classList.remove('open');
+}
+function renderReceipt(){
+  const o = rcvOrder;
+  const lines = rcvLines.map((l, i) => `
+    <div style="background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px;">
+      <div style="font-weight:700; font-size:13px;">${escH(l.name)}</div>
+      <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">הוזמן: ${l.ordered} ${escH(l.unit)}</div>
+      <div style="display:flex; gap:10px; align-items:center; margin-top:6px;">
+        <label style="font-size:12.5px;">התקבל <input id="rcv-q-${i}" type="number" inputmode="decimal" min="0" value="${l.received == null ? l.ordered : l.received}" style="width:80px; padding:7px; border:1px solid var(--line); border-radius:8px; font-family:inherit; background:var(--bg); color:var(--ink);"></label>
+        <label style="font-size:12.5px; display:flex; gap:5px; align-items:center;"><input id="rcv-d-${i}" type="checkbox" ${l.damaged ? 'checked' : ''}> פגום</label>
+      </div>
+    </div>`).join('');
+  const extras = rcvExtras.map((x, i) => `
+    <div style="display:flex; gap:6px; margin-bottom:6px;">
+      <input id="rcv-xn-${i}" placeholder="שם הפריט שהתקבל" value="${escH(x.name)}" style="flex:1; padding:9px; border:1px solid var(--line); border-radius:9px; font-family:inherit; background:var(--paper); color:var(--ink);">
+      <input id="rcv-xq-${i}" type="number" inputmode="numeric" min="1" value="${x.qty}" style="width:70px; padding:9px; border:1px solid var(--line); border-radius:9px; font-family:inherit; background:var(--paper); color:var(--ink);"></div>`).join('');
+  const photos = rcvPhotos.map((p, i) => `<div style="position:relative; display:inline-block; margin:0 0 6px 6px;"><img src="${p}" style="height:84px; border-radius:8px; border:1px solid var(--line);"><button onclick="rcvDelPhoto(${i})" style="position:absolute; top:-6px; left:-6px; width:22px; height:22px; border-radius:50%; border:none; background:var(--urgent); color:#fff; cursor:pointer;">✕</button></div>`).join('');
+  document.getElementById('rcvBody').innerHTML = `
+    <div style="font-size:12.5px; color:var(--ink-soft); line-height:1.5; margin-bottom:10px;"><b style="color:var(--ink);">${escH(o.project)}</b>${o.supplier ? ' · ' + escH(o.supplier) : ''}<br>צלם את תעודת המשלוח. אם יש פער בין מה שהוזמן למה שהתקבל, יישלח אוטומטית דיווח להחזרה ולזיכוי.</div>
+    <input id="rcv-no" placeholder="מס׳ תעודת משלוח" style="${rcvField()} margin-top:0;">
+    <div style="font-weight:700; font-size:13.5px; margin:14px 0 6px;">צילום תעודת המשלוח</div>
+    <div>${photos}</div>
+    <input type="file" accept="image/*" capture="environment" multiple onchange="onRcvPhotos(this.files); this.value='';" style="font-size:13px;">
+    <label style="display:flex; gap:6px; align-items:center; font-size:12.5px; margin-top:8px;"><input id="rcv-nodoc" type="checkbox"> לא התקבלה תעודת משלוח</label>
+    <div style="font-weight:700; font-size:13.5px; margin:16px 0 6px;">מה התקבל</div>
+    ${lines || '<div style="font-size:12.5px; color:var(--ink-soft);">לא הצלחתי לקרוא את רשימת הפריטים של ההזמנה. צלם את התעודה והוסף הערה.</div>'}
+    ${extras}
+    <button class="entry-add" onclick="rcvAddExtra()" style="margin:4px 0 10px;">+ פריט שהתקבל ולא הוזמן</button>
+    <textarea id="rcv-note" rows="2" placeholder="הערה לתעודה" style="${rcvField()}"></textarea>
+    <button class="send-btn" style="margin-top:12px;" onclick="sendReceipt()">שלח קבלה</button>`;
+}
+function rcvSnapshot(){
+  rcvLines.forEach((l, i) => {
+    const q = document.getElementById('rcv-q-' + i), d = document.getElementById('rcv-d-' + i);
+    if(q) l.received = q.value === '' ? l.ordered : parseFloat(q.value);
+    if(d) l.damaged = d.checked;
+  });
+  rcvExtras.forEach((x, i) => {
+    const n = document.getElementById('rcv-xn-' + i), q = document.getElementById('rcv-xq-' + i);
+    if(n) x.name = n.value; if(q) x.qty = parseInt(q.value) || 1;
+  });
+}
+function rcvAddExtra(){ rcvSnapshot(); const keep = {no:(document.getElementById('rcv-no')||{}).value, note:(document.getElementById('rcv-note')||{}).value}; rcvExtras.push({name:'', qty:1}); renderReceipt(); document.getElementById('rcv-no').value = keep.no || ''; document.getElementById('rcv-note').value = keep.note || ''; }
+function rcvDelPhoto(i){ rcvSnapshot(); rcvPhotos.splice(i, 1); renderReceipt(); }
+function addRcvPhoto(dataUrl){ if(rcvPhotos.length >= 3) return; rcvSnapshot(); const keep = {no:(document.getElementById('rcv-no')||{}).value, note:(document.getElementById('rcv-note')||{}).value}; rcvPhotos.push(dataUrl); renderReceipt(); document.getElementById('rcv-no').value = keep.no || ''; document.getElementById('rcv-note').value = keep.note || ''; }
+function onRcvPhotos(files){
+  Array.from(files || []).slice(0, 3 - rcvPhotos.length).forEach(f => {
+    const rd = new FileReader();
+    rd.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const sc = Math.min(1, 1280 / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        addRcvPhoto(c.toDataURL('image/jpeg', 0.65));
+      };
+      img.src = rd.result;
+    };
+    rd.readAsDataURL(f);
+  });
+}
+function rcvExceptions(){
+  const ex = [];
+  rcvLines.forEach(l => {
+    const rec = l.received == null ? l.ordered : l.received;
+    if(l.damaged) ex.push('• ' + l.name + ' — פגום (' + rec + ' ' + l.unit + ')');
+    if(rec < l.ordered) ex.push('• ' + l.name + ' — הוזמן ' + l.ordered + ', התקבל ' + rec + ' (חסר ' + (l.ordered - rec) + ')');
+    else if(rec > l.ordered) ex.push('• ' + l.name + ' — הוזמן ' + l.ordered + ', התקבל ' + rec + ' (עודף ' + (rec - l.ordered) + ')');
+  });
+  rcvExtras.filter(x => x.name.trim()).forEach(x => ex.push('• ' + x.name.trim() + ' — התקבל ולא הוזמן (' + x.qty + ')'));
+  return ex;
+}
+async function sendNow(ev){
+  if(!LOG_URL) return 'failed';
+  try{
+    await fetch(LOG_URL, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(ev)});
+    return 'sent';
+  }catch(e){
+    try{
+      const q = JSON.parse(lsGet('logQueue') || '[]'); q.push(ev);
+      localStorage.setItem('logQueue', JSON.stringify(q.slice(-30)));
+      return 'queued';
+    }catch(e2){ return 'failed'; }
+  }
+}
+async function sendReceipt(){
+  if(!rcvOrder) return;
+  rcvSnapshot();
+  const noDoc = document.getElementById('rcv-nodoc').checked;
+  const noteNo = document.getElementById('rcv-no').value.trim();
+  const note = document.getElementById('rcv-note').value.trim();
+  if(!rcvPhotos.length && !noDoc){ showToast('צלם את תעודת המשלוח'); return; }
+  rcvExtras = rcvExtras.filter(x => x.name.trim());
+  const ex = rcvExceptions();
+  if(noDoc) ex.push('• לא התקבלה תעודת משלוח');
+  const hasExc = ex.length > 0;
+  const ev = {t:'receipt', rowId:rcvRow, noteNo, noDoc, note,
+    lines: rcvLines.map(l => ({name:l.name, ordered:l.ordered, received:l.received == null ? l.ordered : l.received, unit:l.unit, damaged:!!l.damaged})),
+    extras: rcvExtras.map(x => ({name:x.name.trim(), qty:x.qty})), photos: rcvPhotos.slice(),
+    user:{name:user.name, phone:user.phone}, project:rcvOrder.project, at:Date.now()};
+  const res = await sendNow(ev);
+  if(res === 'failed'){ showToast('הקבלה לא נשלחה — בדוק חיבור ונסה שוב'); return; }
+  const stage = hasExc ? 'exc' : 'ok';
+  lsSet('rcv:' + rcvRow, stage);
+  rcvOrder.rcv = stage;
+  const msg = hasExc ? ['*⚠️ חריגה בקבלת סחורה*', 'פרויקט: ' + rcvOrder.project, 'מזהה הזמנה: ' + rcvRow, rcvOrder.supplier ? 'ספק: ' + rcvOrder.supplier : '', noteNo ? 'תעודת משלוח: ' + noteNo : '', 'חריגות:'].filter(Boolean).concat(ex, note ? ['הערה: ' + note] : [], ['נדרש: תיאום החזרה לספק וזיכוי החשבון.', 'מאת: ' + user.name + ' | ' + user.phone]).join('\n') : '';
+  closeReceipt();
+  renderMyOrders();
+  showToast(res === 'queued' ? 'הקבלה תישלח כשיחזור החיבור' : 'הקבלה נרשמה');
+  if(hasExc){
+    openLink(waUrl(msg, SHARON_WHATSAPP));
+    shareReceiptPhotos(msg);
+  }
+}
+async function shareReceiptPhotos(msg){
+  try{
+    if(!rcvPhotos.length || !navigator.canShare) return;
+    const files = await Promise.all(rcvPhotos.map(async (p, i) => new File([await (await fetch(p)).blob()], 'תעודת-משלוח-' + (i + 1) + '.jpg', {type:'image/jpeg'})));
+    if(navigator.canShare({files})){
+      const b = document.createElement('button');
+      b.className = 'send-btn';
+      b.style.cssText = 'position:fixed; left:12px; right:12px; bottom:14px; z-index:90;';
+      b.textContent = 'שתף את תמונת התעודה בווצאפ';
+      b.onclick = async () => { try{ await navigator.share({files, text: msg}); }catch(e){} b.remove(); };
+      document.body.appendChild(b);
+      setTimeout(() => { if(b.parentNode) b.remove(); }, 60000);
+    }
+  }catch(e){}
+}
+
 let toastTimer;
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -1958,6 +2185,7 @@ renderGrid();
 initSite();
 flushLog();
 applyLang(LANG);
+syncTime();
 </script>
 </body>
 </html>
