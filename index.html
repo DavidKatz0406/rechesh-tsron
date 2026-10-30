@@ -1510,7 +1510,7 @@ function closeOrders(){
   document.getElementById('ordersPanel').classList.remove('open');
   document.getElementById('overlay').classList.remove('open');
 }
-document.addEventListener('visibilitychange', () => { if(!document.hidden){ fetchMyOrders(); flushLog(); syncTime(); } });
+document.addEventListener('visibilitychange', () => { if(!document.hidden){ fetchMyOrders(); flushLog(); syncTime(); } else closeCamera(); });
 setInterval(() => { if(!document.hidden) fetchMyOrders(); }, 120000);
 
 // ===== פרטי אספקה, פריט חופשי, היסטוריה (הזמן שוב), אזהרת כפילות ופריטים נפוצים =====
@@ -1885,6 +1885,13 @@ const TR_DATA = [
 ['צלם את תעודת המשלוח','صوّر سند التسليم','Сфотографируйте накладную'],
 ['הקבלה נרשמה','تم تسجيل الاستلام','Приёмка зарегистрирована'],
 ['שתף את תמונת התעודה בווצאפ','شارك صورة السند في واتساب','Поделиться фото накладной в WhatsApp'],
+['📷 צלם תעודה','📷 صوّر السند','📷 Сфотографировать накладную'],
+['מקם את התעודה במסגרת וודא שהכתב קריא','ضع السند داخل الإطار وتأكد أن الكتابة واضحة','Расположите накладную в кадре и убедитесь, что текст читаем'],
+['או בחר תמונה מהגלריה','أو اختر صورة من المعرض','Или выберите фото из галереи'],
+['סיום','إنهاء','Готово'],
+['לא ניתן להפעיל מצלמה בתוך האפליקציה — נפתחת מצלמת המכשיר','تعذّر تشغيل الكاميرا داخل التطبيق — تُفتح كاميرا الجهاز','Не удалось включить камеру в приложении — открывается камера устройства'],
+['אפשר לצרף עד 3 תמונות','يمكن إرفاق حتى 3 صور','Можно прикрепить до 3 фото'],
+['צורפו 3 תמונות','تم إرفاق 3 صور','Прикреплено 3 фото'],
 ];
 
 // ===== שפות: עברית / ערבית / רוסית. מתרגם את הממשק בלבד; ההודעות לשרון ולספקים נשארות בעברית =====
@@ -2038,6 +2045,7 @@ function openReceipt(id){
   document.getElementById('overlay').classList.add('open');
 }
 function closeReceipt(){
+  closeCamera();
   document.getElementById('rcvPanel').classList.remove('open');
   document.getElementById('overlay').classList.remove('open');
 }
@@ -2062,7 +2070,10 @@ function renderReceipt(){
     <input id="rcv-no" placeholder="מס׳ תעודת משלוח" style="${rcvField()} margin-top:0;">
     <div style="font-weight:700; font-size:13.5px; margin:14px 0 6px;">צילום תעודת המשלוח</div>
     <div>${photos}</div>
-    <input type="file" accept="image/*" capture="environment" multiple onchange="onRcvPhotos(this.files); this.value='';" style="font-size:13px;">
+    <button class="send-btn" onclick="openCamera()" style="margin:6px 0 4px;">📷 צלם תעודה</button>
+    <label style="display:block; font-size:12px; color:var(--ink-soft); margin-top:6px;">או בחר תמונה מהגלריה
+      <input type="file" accept="image/*" multiple onchange="onRcvPhotos(this.files); this.value='';" style="font-size:12.5px; display:block; margin-top:4px;"></label>
+    <input id="rcv-file-cam" type="file" accept="image/*" capture="environment" multiple onchange="onRcvPhotos(this.files); this.value='';" style="display:none;">
     <label style="display:flex; gap:6px; align-items:center; font-size:12.5px; margin-top:8px;"><input id="rcv-nodoc" type="checkbox"> לא התקבלה תעודת משלוח</label>
     <div style="font-weight:700; font-size:13.5px; margin:16px 0 6px;">מה התקבל</div>
     ${lines || '<div style="font-size:12.5px; color:var(--ink-soft);">לא הצלחתי לקרוא את רשימת הפריטים של ההזמנה. צלם את התעודה והוסף הערה.</div>'}
@@ -2121,7 +2132,7 @@ async function sendNow(ev){
   }catch(e){
     try{
       const q = JSON.parse(lsGet('logQueue') || '[]'); q.push(ev);
-      localStorage.setItem('logQueue', JSON.stringify(q.slice(-30)));
+      localStorage.setItem('logQueue', JSON.stringify(q.slice(-8)));
       return 'queued';
     }catch(e2){ return 'failed'; }
   }
@@ -2169,6 +2180,56 @@ async function shareReceiptPhotos(msg){
       setTimeout(() => { if(b.parentNode) b.remove(); }, 60000);
     }
   }catch(e){}
+}
+
+
+// ===== מצלמה בתוך האפליקציה: צילום תעודת המשלוח בלי לצאת מהמסך =====
+let camStream = null;
+async function openCamera(){
+  if(rcvPhotos.length >= 3){ showToast('אפשר לצרף עד 3 תמונות'); return; }
+  rcvSnapshot();
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ camFallback(); return; }
+  try{
+    camStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080}}, audio:false});
+  }catch(e){ camFallback(); return; }
+  closeCameraOverlayOnly();
+  const ov = document.createElement('div');
+  ov.id = 'camOverlay';
+  ov.style.cssText = 'position:fixed; inset:0; z-index:120; background:#000; display:flex; flex-direction:column;';
+  ov.innerHTML = `<video id="camVideo" autoplay playsinline muted style="flex:1; width:100%; object-fit:cover; background:#000;"></video>
+    <div style="position:absolute; top:14px; left:0; right:0; text-align:center; color:#fff; font-size:13px; text-shadow:0 1px 3px #000; padding:0 16px;">מקם את התעודה במסגרת וודא שהכתב קריא</div>
+    <div style="position:absolute; bottom:0; left:0; right:0; padding:18px 22px 30px; display:flex; align-items:center; justify-content:space-between; background:linear-gradient(transparent, rgba(0,0,0,.7));">
+      <button onclick="closeCamera()" style="min-width:74px; padding:10px 12px; border:1px solid rgba(255,255,255,.6); border-radius:10px; background:transparent; color:#fff; font-family:inherit; font-size:14px;">ביטול</button>
+      <button onclick="snapCamera()" aria-label="צלם" style="width:70px; height:70px; border-radius:50%; border:4px solid #fff; background:rgba(255,255,255,.25); cursor:pointer;"></button>
+      <button onclick="closeCamera()" style="min-width:74px; padding:10px 12px; border:none; border-radius:10px; background:#fff; color:#000; font-family:inherit; font-size:14px; font-weight:700;">סיום <span id="camCount">${rcvPhotos.length}</span>/3</button>
+    </div>`;
+  document.body.appendChild(ov);
+  const v = document.getElementById('camVideo');
+  v.srcObject = camStream;
+  try{ await v.play(); }catch(e){}
+}
+function snapCamera(){
+  const v = document.getElementById('camVideo');
+  if(!v || !v.videoWidth) return;
+  const sc = Math.min(1, 1600 / Math.max(v.videoWidth, v.videoHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.round(v.videoWidth * sc);
+  c.height = Math.round(v.videoHeight * sc);
+  c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+  addRcvPhoto(c.toDataURL('image/jpeg', 0.7));
+  const cnt = document.getElementById('camCount');
+  if(cnt) cnt.textContent = rcvPhotos.length;
+  if(rcvPhotos.length >= 3){ closeCamera(); showToast('צורפו 3 תמונות'); }
+}
+function closeCameraOverlayOnly(){ const ov = document.getElementById('camOverlay'); if(ov) ov.remove(); }
+function closeCamera(){
+  if(camStream){ camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  closeCameraOverlayOnly();
+}
+function camFallback(){
+  showToast('לא ניתן להפעיל מצלמה בתוך האפליקציה — נפתחת מצלמת המכשיר');
+  const f = document.getElementById('rcv-file-cam');
+  if(f) f.click();
 }
 
 let toastTimer;
