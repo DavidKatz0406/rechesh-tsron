@@ -285,7 +285,7 @@
 
 </div>
 
-<div class="overlay" id="overlay" onclick="closeCart(); closeFallback(); closeOrders(); closeFree(); closeChange(); closeReceipt();"></div>
+<div class="overlay" id="overlay" onclick="closeCart(); closeFallback(); closeOrders(); closeFree(); closeChange(); closeReceipt(); closeProdPanel();"></div>
 <div class="drawer" id="drawer">
   <div class="drawer-head">
     <h2>עגלת ההזמנה</h2>
@@ -344,6 +344,16 @@
     <button class="drawer-close" onclick="closeReceipt()">✕</button>
   </div>
   <div class="drawer-body" id="rcvBody"></div>
+</div>
+
+<input id="prod-file" type="file" accept="image/*" capture="environment" style="display:none;" onchange="onProductFile(this.files); this.value='';">
+<input id="prod-gallery" type="file" accept="image/*" style="display:none;" onchange="onProductFile(this.files); this.value='';">
+<div class="drawer" id="prodPanel">
+  <div class="drawer-head">
+    <h2>זיהוי מוצר מצילום</h2>
+    <button class="drawer-close" onclick="closeProdPanel()">✕</button>
+  </div>
+  <div class="drawer-body" id="prodBody"></div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -571,6 +581,7 @@ function ensureFullShell(){
       <select id="fullCatSelect" onchange="onFullCatSelect(this.value)">${catOptions}</select>
     </div>
     <button class="entry-add" onclick="openFree()" style="margin:8px 0;">+ פריט שאינו בקטלוג</button>
+    ${user && user.priv ? '<button class="entry-add" onclick="openProductCamera()" style="margin:0 0 8px;">📷 צלם מוצר בשטח</button>' : ''}
     <div id="fullInfo" style="padding:0 2px 8px; font-size:12px; color:var(--ink-soft);"></div>
     <div class="grid" id="fullResults" style="padding:0"></div>`;
 }
@@ -597,7 +608,16 @@ function renderFullCatalog(){
   m = rankResults(m, words);
   const total = m.length;
   info.textContent = total ? 'נמצאו ' + total.toLocaleString('he-IL') + ' פריטים' : '';
-  if(total === 0){ box.innerHTML = `<div class="empty-cart">לא נמצאו פריטים תואמים</div>`; return; }
+  if(total === 0){
+    let extra = '';
+    if(q.length >= 2){
+      photoUnlockUntil = nowMs() + PHOTO_UNLOCK_MS;
+      lastZeroQuery = fullSearchTerm.trim();
+      extra = `<div style="font-size:12.5px; color:var(--ink-soft); margin:10px 0 6px;">חפשת ולא מצאת? אפשר לצלם את המוצר לזיהוי.</div><button class="send-btn" onclick="openProductCamera()">לא מוצא? צלם את המוצר</button><button class="entry-add" onclick="openProductGallery()" style="margin-top:6px;">או בחר תמונה מהגלריה</button>`;
+    }
+    box.innerHTML = `<div class="empty-cart">לא נמצאו פריטים תואמים</div>` + extra;
+    return;
+  }
   box.innerHTML = m.slice(0, fullShown).map(fullCatCardHtml).join('')
     + (total > fullShown ? `<button class="entry-add" onclick="fullMore()">הצג עוד (מוצגים ${Math.min(fullShown, total)} מתוך ${total.toLocaleString('he-IL')})</button>` : '');
 }
@@ -726,7 +746,7 @@ function renderCart(){
       return `<div class="cart-line">
       <div>
         <div class="cart-line-name">${escH(p.name)}</div>
-        <div class="cart-line-sub">פריט שאינו בקטלוג · ${qty} ${escH(p.unit)} · שרון תבדוק מחיר וזמינות</div>
+        <div class="cart-line-sub">פריט שאינו בקטלוג · ${qty} ${escH(p.unit)} · שרון תבדוק מחיר וזמינות</div>${p.photo ? '<img src="' + p.photo + '" style="height:46px; margin-top:5px; border-radius:7px; border:1px solid var(--line);">' : ''}
       </div>
       <div class="cart-line-right">
         <button class="remove-btn" onclick="removeFromCart('${id}')">הסר</button>
@@ -1215,10 +1235,11 @@ function buildOrders(){
     currentSite.contacts.forEach(c => L.push('איש קשר: ' + c.name + ' | טלפון: ' + c.phone));
     metaLines().forEach(x => L.push(x));
     if(sup === '__free') L.push('(פריטים שאינם בקטלוג — נא לבדוק זמינות ומחיר)');
+    if(sup === '__free' && groups[sup].some(it => it.p.photo)) L.push('📷 יש תמונות לפריטים: ביומן ההזמנות, מזהה @@ROW@@');
     L.push('');
     groups[sup].forEach(it => {
       const sku = it.p.sku ? ' | מק״ט ' + it.p.sku : '';
-      L.push('• ' + it.p.name + sku + ' — *' + it.qty + ' ' + it.p.unit + '*');
+      L.push('• ' + it.p.name + sku + ' — *' + it.qty + ' ' + it.p.unit + '*' + (it.p.photo ? ' 📷' : ''));
     });
     const sub = groups[sup].reduce((a, it) => a + it.price * it.qty, 0);
     return {sup, name: sup === '__free' ? 'פריטים מיוחדים' : SUPPLIERS[sup].name, count: groups[sup].length, text: L.join('\n'), sub, ids: groups[sup].map(it => it.p.id), done: false};
@@ -1365,8 +1386,13 @@ function sendOrder(){
   const total = orders.reduce((a, o) => a + o.sub, 0) * 1.18;
   const oid = 'O' + Date.now().toString(36).toUpperCase();
   orders.forEach((o, i) => {
-    const ls = o.text.split('\n');
     o.oid = oid; o.rowId = oid + '-' + (i + 1);
+    o.text = o.text.replace('@@ROW@@', o.rowId);
+    const ls = o.text.split('\n');
+    if(o.sup === '__free'){
+      const ph = (o.ids || []).map(id => customItems[id]).filter(c => c && c.photo);
+      if(ph.length) sendNow({t:'item_photos', rowId:o.rowId, names:ph.map(c => c.name), photos:ph.map(c => c.photo), user:{name:user.name, phone:user.phone}, project:currentSite.name, at:Date.now()});
+    }
     o.items = ls.slice(ls.indexOf('') + 1).join('\n').replace(/\*/g, '');
   });
   recordHistory();
@@ -1892,14 +1918,38 @@ const TR_DATA = [
 ['לא ניתן להפעיל מצלמה בתוך האפליקציה — נפתחת מצלמת המכשיר','تعذّر تشغيل الكاميرا داخل التطبيق — تُفتح كاميرا الجهاز','Не удалось включить камеру в приложении — открывается камера устройства'],
 ['אפשר לצרף עד 3 תמונות','يمكن إرفاق حتى 3 صور','Можно прикрепить до 3 фото'],
 ['צורפו 3 תמונות','تم إرفاق 3 صور','Прикреплено 3 фото'],
+['📷 צלם מוצר בשטח','📷 صوّر منتجًا في الموقع','📷 Сфотографировать товар на объекте'],
+['זיהוי מוצר מצילום','التعرّف على منتج من صورة','Распознавание товара по фото'],
+['צלם את המוצר מקרוב, כך שיראו סימונים ומידות','صوّر المنتج عن قرب بحيث تظهر العلامات والمقاسات','Снимите товар крупным планом, чтобы были видны маркировка и размеры'],
+['⏳ מזהה את המוצר…','⏳ جارٍ التعرّف على المنتج…','⏳ Распознаю товар…'],
+['זיהוי:','التعرّف:','Распознано:'],
+['ביטחון','الثقة','Уверенность'],
+['ההצעות למטה הן מהקטלוג. אשר שזה אכן המוצר לפני ההוספה.','الاقتراحات أدناه من الكتالوج. تأكد أنه المنتج الصحيح قبل الإضافة.','Предложения ниже — из каталога. Убедитесь, что это нужный товар, перед добавлением.'],
+['הזיהוי האוטומטי לא זמין כרגע. אפשר לחפש בקטלוג בעצמך או להזמין לפי תמונה — טל ושרון יזהו את המוצר.','التعرّف التلقائي غير متاح حاليًا. يمكنك البحث في الكتالوج بنفسك أو الطلب حسب الصورة — سيتعرّف طال وشارون على المنتج.','Автоматическое распознавание сейчас недоступно. Найдите в каталоге сами или закажите по фото — Таль и Шарон определят товар.'],
+['חפש בקטלוג','ابحث في الكتالوج','Поиск в каталоге'],
+['לא מצאת? הזמן לפי תמונה','لم تجد؟ اطلب حسب الصورة','Не нашли? Закажите по фото'],
+['תיאור המוצר','وصف المنتج','Описание товара'],
+['הוסף לעגלה כפריט לפי תמונה','أضف إلى السلة كصنف حسب الصورة','Добавить в корзину как позицию по фото'],
+['צלם שוב','صوّر مرة أخرى','Снять ещё раз'],
+['לא נמצאו התאמות בקטלוג','لم يتم العثور على تطابقات في الكتالوج','Совпадений в каталоге не найдено'],
+['חפשת ולא מצאת? אפשר לצלם את המוצר לזיהוי.','بحثت ولم تجد؟ يمكنك تصوير المنتج للتعرّف عليه.','Искали и не нашли? Можно сфотографировать товар для распознавания.'],
+['לא מוצא? צלם את המוצר','لا تجده؟ صوّر المنتج','Не нашли? Сфотографируйте товар'],
+['קודם חפש את המוצר בקטלוג. אם לא נמצא, תופיע כאן אפשרות לצלם אותו.','ابحث عن المنتج في الكتالوج أولًا. إن لم تجده ستظهر هنا إمكانية تصويره.','Сначала найдите товар в каталоге. Если не найден, здесь появится возможность его сфотографировать.'],
+['השתמשת בכל הזיהויים להיום. אפשר לחפש בקטלוג בעצמך או להזמין לפי תמונה — טל ושרון יזהו את המוצר.','استخدمت كل عمليات التعرّف لهذا اليوم. يمكنك البحث في الكتالوج بنفسك أو الطلب حسب الصورة — سيتعرّف طال وشارون على المنتج.','Вы использовали все распознавания на сегодня. Найдите в каталоге сами или закажите по фото — Таль и Шарон определят товар.'],
+['הזיהוי האוטומטי הגיע למכסה היומית של החברה. אפשר לחפש בעצמך או להזמין לפי תמונה.','وصل التعرّف التلقائي إلى الحصة اليومية للشركة. يمكنك البحث بنفسك أو الطلب حسب الصورة.','Автоматическое распознавание достигло дневного лимита компании. Найдите сами или закажите по фото.'],
+['נותרו לך','تبقّى لك','Осталось у вас'],
+['זיהויים היום','عمليات تعرّف اليوم','распознаваний на сегодня'],
+['גלריה','المعرض','Галерея'],
 ];
 
 // ===== שפות: עברית / ערבית / רוסית. מתרגם את הממשק בלבד; ההודעות לשרון ולספקים נשארות בעברית =====
-const LANG_LABEL = {he:'עב', ar:'ع', ru:'RU'};
+const TR_HI = [["קטלוג הזמנות עובדים", "कर्मचारी ऑर्डर कैटलॉग"], ["כל עובד יכול להזמין ישירות מהקטלוג.", "हर कर्मचारी सीधे कैटलॉग से ऑर्डर कर सकता है।"], ["המחיר הזול ביותר", "सबसे कम कीमत"], ["מסומן אוטומטית בכל פריט.", "हर आइटम पर अपने आप चिह्नित।"], ["אביזרי הברגה מגולוונים", "गैल्वनाइज़्ड थ्रेडेड फिटिंग्स"], ["כיבוי אש", "अग्निशमन"], ["חומרים כלליים", "सामान्य सामग्री"], ["🔍 קטלוג מלא (8,400+ פריטים)", "🔍 पूरा कैटलॉग (8,400+ आइटम)"], ["עגלת ההזמנה", "ऑर्डर कार्ट"], ["רכש", "खरीद"], ["שרון", "शेरोन"], ["טל", "ताल"], ["כניסה", "लॉग इन"], ["הקלד את מספר הנייד שלך. מנהל פרויקט רואה ומזמין רק עבור הפרויקטים שלו.", "अपना मोबाइल नंबर लिखें। प्रोजेक्ट मैनेजर केवल अपने प्रोजेक्ट देखता है और उन्हीं के लिए ऑर्डर करता है।"], ["מספר נייד, למשל 0501234567", "मोबाइल नंबर, जैसे 0501234567"], ["המספר לא נמצא ברשימה. פנה לרכש.", "यह नंबर सूची में नहीं है। खरीद विभाग से संपर्क करें।"], ["הזמנת חומר מתבצעת דרך שרון: ההזמנה נשלחת אליה בווצאפ והיא מעבירה אותה לספק.", "सामग्री का ऑर्डर शेरोन के माध्यम से होता है: ऑर्डर उन्हें WhatsApp पर भेजा जाता है और वे उसे सप्लायर को आगे भेजती हैं।"], ["הזמנה מעל ₪", "ऑर्डर राशि ₪"], ["דורשת אישור של", "से अधिक — अनुमोदन आवश्यक:"], ["שלום", "नमस्ते"], ["בחר את הפרויקט שעבורו אתה מזמין:", "वह प्रोजेक्ट चुनें जिसके लिए आप ऑर्डर कर रहे हैं:"], ["לא אתה? החלף משתמש", "आप नहीं हैं? उपयोगकर्ता बदलें"], ["חיפוש פרויקט, חברה או מנהל", "प्रोजेक्ट, कंपनी या मैनेजर खोजें"], ["לא נמצאו פרויקטים", "कोई प्रोजेक्ट नहीं मिला"], ["פרויקט:", "प्रोजेक्ट:"], ["החלף פרויקט ›", "प्रोजेक्ट बदलें ›"], ["החלף פרויקט", "प्रोजेक्ट बदलें"], ["איש קשר:", "संपर्क व्यक्ति:"], ["חיפוש לפי שם או מק״ט (אפשר כמה מילים)...", "नाम या कैटलॉग नंबर से खोजें (कई शब्द लिख सकते हैं)..."], ["כל הקטגוריות", "सभी श्रेणियाँ"], ["+ פריט שאינו בקטלוג", "+ कैटलॉग में न होने वाला आइटम"], ["נמצאו", "मिले"], ["פריטים:", "आइटम:"], ["פריטים", "आइटम"], ["לא נמצאו פריטים תואמים", "कोई मेल खाता आइटम नहीं मिला"], ["הצג עוד (מוצגים", "और दिखाएँ (दिखाए गए"], ["מתוך", "में से"], ["הפריטים שהזמנת הכי הרבה:", "आपने सबसे ज़्यादा ऑर्डर किए गए आइटम:"], ["או הקלד", "या लिखें"], ["הקלד", "लिखें"], ["שם פריט או מק״ט (אפשר כמה מילים, למשל \"ברך 45 110\"), או בחר קטגוריה, כדי לחפש מתוך", "आइटम का नाम या कैटलॉग नंबर (कई शब्द लिख सकते हैं, जैसे \"ברך 45 110\"), या श्रेणी चुनें, इनमें खोजने के लिए:"], ["הוסף לעגלה", "कार्ट में जोड़ें"], ["בעגלה ✓", "कार्ट में ✓"], ["מק״ט", "कैटलॉग नं."], ["יחידת מידה:", "इकाई:"], ["להמחשה", "चित्रण हेतु"], ["נוסף לעגלה", "कार्ट में जोड़ा गया"], ["בחר כמות לפני ההוספה", "जोड़ने से पहले मात्रा चुनें"], ["בחר כמות", "मात्रा चुनें"], ["כתוב תיאור לפריט", "आइटम का विवरण लिखें"], ["כתוב מה לשנות", "लिखें क्या बदलना है"], ["העגלה ריקה. חזור לקטלוג והוסף פריטים.", "कार्ट खाली है। कैटलॉग में लौटकर आइटम जोड़ें।"], ["העגלה ריקה", "कार्ट खाली है"], ["הסר", "हटाएँ"], ["פיצול לפי מחיר הכי זול", "सबसे कम कीमत के अनुसार विभाजन"], ["ריכוז אצל ספק אחד", "एक सप्लायर के पास एकत्र करें"], ["פיצול לפי הזול ביותר בכל פריט", "हर आइटम पर सबसे कम कीमत के अनुसार विभाजन"], ["הזמנה מרוכזת אצל", "एकत्रित ऑर्डर —"], ["פיצול בין הספקים חוסך כ-₪", "सप्लायर्स में बाँटने से लगभग ₪ की बचत"], ["לעומת ריכוז אצל ספק יחיד", "एक सप्लायर से ऑर्डर की तुलना में"], ["במקרה הזה אין הבדל משמעותי — ריכוז אצל ספק אחד לא פוגע במחיר", "इस मामले में कोई खास अंतर नहीं — एक सप्लायर के पास ऑर्डर करने से कीमत पर असर नहीं पड़ता"], ["סכום ביניים (לפני מע״מ)", "उप-योग (VAT से पहले)"], ["מע״מ (18%)", "VAT (18%)"], ["סה״כ לתשלום", "कुल देय राशि"], ["כולל מע״מ", "VAT सहित"], ["לפני מע״מ", "VAT से पहले"], ["פריט שאינו בקטלוג ·", "कैटलॉग में न होने वाला आइटम ·"], ["פריט שאינו בקטלוג", "कैटलॉग में न होने वाला आइटम"], ["שרון תבדוק מחיר וזמינות", "शेरोन कीमत और उपलब्धता जाँचेंगी"], ["פרטי אספקה", "आपूर्ति विवरण"], ["נדרש עד", "आवश्यक तिथि"], ["דחוף", "अत्यावश्यक"], ["הערה (למשל: להגיע בבוקר, לתאם עם איש הקשר)", "टिप्पणी (जैसे: सुबह पहुँचाएँ, संपर्क व्यक्ति से समन्वय करें)"], ["📊 החודש הוזמן באתר:", "📊 इस महीने साइट पर ऑर्डर:"], ["עם העגלה הזו:", "इस कार्ट के साथ:"], ["תקציב חודשי: ₪", "मासिक बजट: ₪"], ["הוזמן ₪", "ऑर्डर किया ₪"], ["עגלה זו ₪", "यह कार्ट ₪"], ["יתרה ₪", "शेष ₪"], ["חריגה של ₪", "अधिक खर्च ₪"], ["ההזמנה חורגת מהתקציב החודשי של הפרויקט.", "ऑर्डर प्रोजेक्ट के मासिक बजट से अधिक है।"], ["ההזמנה חורגת מהתקציב ונדרש אישור של", "ऑर्डर बजट से अधिक है और अनुमोदन आवश्यक है:"], ["ההזמנה מעל ₪", "ऑर्डर ₪"], ["(כולל מע״מ) — נדרש אישור של", "से अधिक है (VAT सहित) — अनुमोदन आवश्यक:"], ["קודם נשלחת אליו בקשת אישור, ורק אחרי שהוא מאשר אפשר לשלוח לשרון.", "पहले उन्हें अनुमोदन अनुरोध भेजा जाता है, और उनकी स्वीकृति के बाद ही शेरोन को भेजा जा सकता है।"], ["שלח לטל לאישור", "ताल को अनुमोदन के लिए भेजें"], ["שליחה לשרון בווצאפ", "WhatsApp पर शेरोन को भेजें"], ["ההודעה בלי מחירים, מוכנה להעברה לספק. הזמנה עם כמה ספקים נשלחת כהודעה נפרדת לכל ספק.", "संदेश बिना कीमतों के है और सप्लायर को भेजने के लिए तैयार है। कई सप्लायर वाला ऑर्डर हर सप्लायर के लिए अलग संदेश के रूप में भेजा जाता है।"], ["העגלה נשמרת אוטומטית במכשיר, לכל פרויקט בנפרד.", "कार्ट डिवाइस पर अपने आप सेव होता है, हर प्रोजेक्ट के लिए अलग।"], ["נקה את כל העגלה", "पूरा कार्ट खाली करें"], ["ההזמנה האחרונה שנשלחה (", "अंतिम भेजा गया ऑर्डर ("], ["שליחה לשרון", "शेरोन को भेजना"], ["שלח לשרון בווצאפ", "WhatsApp पर शेरोन को भेजें"], ["העתקת ההודעה", "संदेश कॉपी करें"], ["נשלח ✓ — לחץ לשליחה חוזרת", "भेज दिया ✓ — दोबारा भेजने के लिए दबाएँ"], ["ההודעה נפתחה בווצאפ. אם לא נפתחה, לחץ על הכפתור.", "संदेश WhatsApp में खुल गया है। न खुला हो तो बटन दबाएँ।"], ["ההזמנה מפוצלת לפי ספק. שלח כל הודעה בנפרד — שרון מעבירה כל אחת לספק כמו שהיא, בלי לערוך.", "ऑर्डर सप्लायर के अनुसार बँटा है। हर संदेश अलग से भेजें — शेरोन हर एक को बिना बदलाव के सप्लायर को आगे भेजती हैं।"], ["אחרי ששרון תעביר את ההזמנה לספק, המצב והספק שממנו יגיע החומר יופיעו ב\"ההזמנות שלי\" בדף הראשי.", "शेरोन द्वारा ऑर्डर सप्लायर को भेजे जाने के बाद, स्थिति और वह सप्लायर जिससे सामग्री आएगी, मुख्य पेज पर \"मेरे ऑर्डर\" में दिखाई देंगे।"], ["ההזמנה על סך", "ऑर्डर की राशि"], ["(כולל מע״מ) מעל המגבלה של ₪", "(VAT सहित) सीमा से अधिक है: ₪"], ["— נדרש אישור של טל לפני שליחה לשרון.", "— शेरोन को भेजने से पहले ताल का अनुमोदन आवश्यक है।"], ["שלב 1 — בקשת אישור מטל", "चरण 1 — ताल से अनुमोदन का अनुरोध"], ["שלח לטל בווצאפ", "WhatsApp पर ताल को भेजें"], ["שלב 2 — אחרי שטל אישר", "चरण 2 — ताल के अनुमोदन के बाद"], ["המתן לתשובה שלו בווצאפ. כשהוא מאשר, לחץ:", "WhatsApp पर उनके जवाब का इंतज़ार करें। जब वे मंज़ूर करें, दबाएँ:"], ["טל אישר ✓ — המשך לשליחה לשרון", "ताल ने मंज़ूर किया ✓ — शेरोन को भेजना जारी रखें"], ["שלב 3 — שליחה לשרון", "चरण 3 — शेरोन को भेजना"], ["הודעת אישור לשרון", "शेरोन के लिए अनुमोदन संदेश"], ["הודעה קצרה שמיידעת אותה שהאישור התקבל. היא לא מיועדת לספק.", "छोटा संदेश जो उन्हें बताता है कि अनुमोदन मिल गया है। यह सप्लायर के लिए नहीं है।"], ["הודעות לספקים (כל ספק בהודעה נפרדת, בלי עריכה):", "सप्लायर्स को संदेश (हर सप्लायर को अलग संदेश, बिना बदलाव के):"], ["בטל את הבקשה וחזור לעגלה", "अनुरोध रद्द करें और कार्ट पर लौटें"], ["⏳ הזמנה ממתינה לאישור", "⏳ ऑर्डर अनुमोदन की प्रतीक्षा में"], ["⏳ ממתינה לאישור של", "⏳ अनुमोदन की प्रतीक्षा —"], ["פריטים מיוחדים", "विशेष आइटम"], ["📦 ההזמנות שלי", "📦 मेरे ऑर्डर"], ["ההזמנות שלי", "मेरे ऑर्डर"], ["נקלטו", "प्राप्त हुए"], ["פתח ›", "खोलें ›"], ["המצב מתעדכן אחרי ששרון מעבירה את ההזמנה לספק, וכולל את הספק שממנו יגיע החומר.", "शेरोन द्वारा ऑर्डर सप्लायर को भेजे जाने के बाद स्थिति अपडेट होती है, और उसमें वह सप्लायर शामिल होता है जिससे सामग्री आएगी।"], ["✓ נקלטה והועברה לספק. החומר יגיע מ-", "✓ प्राप्त और सप्लायर को भेजा गया। सामग्री आएगी: "], ["נשלחה לשרון, בטיפול", "शेरोन को भेजा गया, प्रक्रिया में"], ["בוטלה", "रद्द किया गया"], ["אין הזמנות ב-45 הימים האחרונים.", "पिछले 45 दिनों में कोई ऑर्डर नहीं।"], ["אין הזמנות להצגה.", "दिखाने के लिए कोई ऑर्डर नहीं।"], ["הזמנות קודמות — הזמן שוב", "पिछले ऑर्डर — फिर से ऑर्डर करें"], ["הוסף הכל לעגלה", "सभी को कार्ट में जोड़ें"], ["בקש שינוי / ביטול", "बदलाव / रद्द करने का अनुरोध करें"], ["נשלחה בקשת שינוי / ביטול", "बदलाव / रद्द करने का अनुरोध भेजा गया"], ["בקשת שינוי / ביטול", "बदलाव / रद्द करने का अनुरोध"], ["שינוי", "बदलाव"], ["ביטול", "रद्द करना"], ["שלח לשרון", "शेरोन को भेजें"], ["הבקשה נרשמת ביומן ונפתח ווצאפ לשרון עם ההודעה מוכנה.", "अनुरोध लॉग में दर्ज होता है और शेरोन के लिए तैयार संदेश के साथ WhatsApp खुलता है।"], ["מה לשנות? (למשל: להוסיף 5 יחידות, לדחות לשבוע הבא)", "क्या बदलना है? (जैसे: 5 यूनिट जोड़ें, अगले हफ़्ते के लिए टालें)"], ["הזמנה לפרויקט", "प्रोजेक्ट का ऑर्डर"], ["הבקשה נשלחה", "अनुरोध भेजा गया"], ["הבקשה בוטלה", "अनुरोध रद्द किया गया"], ["הועתק! הדבק בווצאפ", "कॉपी हो गया! WhatsApp में पेस्ट करें"], ["ההזמנה נשלחה לשרון ✓", "ऑर्डर शेरोन को भेजा गया ✓"], ["יש הזמנה שממתינה לאישור — השלם או בטל אותה קודם", "एक ऑर्डर अनुमोदन की प्रतीक्षा में है — पहले उसे पूरा करें या रद्द करें"], ["יש הזמנה שממתינה לאישור — השלם או בטל אותה", "एक ऑर्डर अनुमोदन की प्रतीक्षा में है — उसे पूरा करें या रद्द करें"], ["פריטים נוספו לעגלה", "आइटम कार्ट में जोड़े गए"], ["תאר את הפריט. שרון תבדוק זמינות ומחיר מול הספקים. אפשר לצרף תמונה ידנית בווצאפ אחרי שהשיחה איתה נפתחת.", "आइटम का वर्णन करें। शेरोन सप्लायर्स से उपलब्धता और कीमत जाँचेंगी। उनके साथ चैट खुलने के बाद WhatsApp में फ़ोटो हाथ से जोड़ी जा सकती है।"], ["תיאור הפריט (סוג, מידה, יצרן) *", "आइटम का विवरण (प्रकार, साइज़, निर्माता) *"], ["כמות", "मात्रा"], ["יחידת מידה", "इकाई"], ["למחוק את כל הפריטים בעגלה?", "कार्ट के सभी आइटम हटाएँ?"], ["לבטל את בקשת האישור? הפריטים יישארו בעגלה.", "अनुमोदन का अनुरोध रद्द करें? आइटम कार्ट में रहेंगे।"], ["כבר הוזמן באתר", "साइट पर पहले ही ऑर्डर हो चुका है"], [". להוסיף שוב?", ". क्या फिर से जोड़ें?"], ["הפריט", "आइटम"], ["שעות", "घंटे पहले"], ["לפני", "समय:"], ["ההזמנה הזו הייתה לפרויקט", "यह ऑर्डर प्रोजेक्ट के लिए था"], ["ואתה עכשיו בפרויקט", "और आप अभी प्रोजेक्ट में हैं"], ["להוסיף את הפריטים לעגלה של הפרויקט הנוכחי?", "क्या आइटम मौजूदा प्रोजेक्ट के कार्ट में जोड़ें?"], ["מ-", "से "], ["ההזמנות נסגרו להיום (בכל יום עד 10:30). העגלה נשמרת, ואפשר לשלוח מחר.", "आज के लिए ऑर्डर बंद हो गए (हर दिन 10:30 तक)। कार्ट सेव रहता है, कल भेज सकते हैं।"], ["ההזמנות נסגרות היום בשעה 10:30", "आज ऑर्डर 10:30 बजे बंद होते हैं"], ["ההזמנות נסגרו להיום (10:30). העגלה נשמרת — אפשר לשלוח מחר.", "आज के लिए ऑर्डर बंद हो गए (10:30)। कार्ट सेव है — कल भेजें।"], ["קבלת סחורה / תעודת משלוח", "माल प्राप्ति / डिलीवरी नोट"], ["קבלת סחורה", "माल प्राप्ति"], ["✓ התקבל תקין", "✓ ठीक से प्राप्त"], ["⚠ חריגה בקבלה — בטיפול זיכוי", "⚠ प्राप्ति में गड़बड़ी — क्रेडिट की प्रक्रिया में"], ["✓ החריגה טופלה — התקבל זיכוי", "✓ गड़बड़ी सुलझी — क्रेडिट मिल गया"], ["צלם את תעודת המשלוח. אם יש פער בין מה שהוזמן למה שהתקבל, יישלח אוטומטית דיווח להחזרה ולזיכוי.", "डिलीवरी नोट की फ़ोटो लें। यदि ऑर्डर और प्राप्त माल में अंतर है, तो वापसी और क्रेडिट के लिए रिपोर्ट अपने आप भेजी जाएगी।"], ["מס׳ תעודת משלוח", "डिलीवरी नोट नंबर"], ["התקבל", "प्राप्त"], ["הוזמן:", "ऑर्डर:"], ["פגום", "क्षतिग्रस्त"], ["+ פריט שהתקבל ולא הוזמן", "+ प्राप्त हुआ पर ऑर्डर नहीं किया गया आइटम"], ["צילום תעודת המשלוח", "डिलीवरी नोट की फ़ोटो"], ["לא התקבלה תעודת משלוח", "डिलीवरी नोट नहीं मिला"], ["הערה לתעודה", "नोट पर टिप्पणी"], ["שלח קבלה", "प्राप्ति भेजें"], ["צלם את תעודת המשלוח", "डिलीवरी नोट की फ़ोटो लें"], ["הקבלה נרשמה", "प्राप्ति दर्ज हो गई"], ["שתף את תמונת התעודה בווצאפ", "डिलीवरी नोट की फ़ोटो WhatsApp पर साझा करें"], ["📷 צלם תעודה", "📷 नोट की फ़ोटो लें"], ["מקם את התעודה במסגרת וודא שהכתב קריא", "नोट को फ़्रेम में रखें और सुनिश्चित करें कि लिखावट पढ़ने योग्य है"], ["או בחר תמונה מהגלריה", "या गैलरी से फ़ोटो चुनें"], ["סיום", "पूरा"], ["לא ניתן להפעיל מצלמה בתוך האפליקציה — נפתחת מצלמת המכשיר", "ऐप के अंदर कैमरा चालू नहीं हो सका — डिवाइस का कैमरा खुल रहा है"], ["אפשר לצרף עד 3 תמונות", "अधिकतम 3 फ़ोटो जोड़ सकते हैं"], ["צורפו 3 תמונות", "3 फ़ोटो जोड़ी गईं"], ["📷 צלם מוצר בשטח", "📷 साइट पर उत्पाद की फ़ोटो लें"], ["זיהוי מוצר מצילום", "फ़ोटो से उत्पाद की पहचान"], ["צלם את המוצר מקרוב, כך שיראו סימונים ומידות", "उत्पाद की पास से फ़ोटो लें ताकि निशान और माप दिखें"], ["⏳ מזהה את המוצר…", "⏳ उत्पाद की पहचान हो रही है…"], ["זיהוי:", "पहचान:"], ["ביטחון", "विश्वास"], ["ההצעות למטה הן מהקטלוג. אשר שזה אכן המוצר לפני ההוספה.", "नीचे के सुझाव कैटलॉग से हैं। जोड़ने से पहले पुष्टि करें कि यही उत्पाद है।"], ["הזיהוי האוטומטי לא זמין כרגע. אפשר לחפש בקטלוג בעצמך או להזמין לפי תמונה — טל ושרון יזהו את המוצר.", "स्वचालित पहचान अभी उपलब्ध नहीं है। आप कैटलॉग में खुद खोज सकते हैं या फ़ोटो से ऑर्डर कर सकते हैं — ताल और शेरोन उत्पाद की पहचान करेंगे।"], ["חפש בקטלוג", "कैटलॉग में खोजें"], ["לא מצאת? הזמן לפי תמונה", "नहीं मिला? फ़ोटो से ऑर्डर करें"], ["תיאור המוצר", "उत्पाद का विवरण"], ["הוסף לעגלה כפריט לפי תמונה", "फ़ोटो वाले आइटम के रूप में कार्ट में जोड़ें"], ["צלם שוב", "दोबारा फ़ोटो लें"], ["לא נמצאו התאמות בקטלוג", "कैटलॉग में कोई मेल नहीं मिला"], ["חפשת ולא מצאת? אפשר לצלם את המוצר לזיהוי.", "खोजा और नहीं मिला? पहचान के लिए उत्पाद की फ़ोटो ले सकते हैं।"], ["לא מוצא? צלם את המוצר", "नहीं मिल रहा? उत्पाद की फ़ोटो लें"], ["קודם חפש את המוצר בקטלוג. אם לא נמצא, תופיע כאן אפשרות לצלם אותו.", "पहले कैटलॉग में उत्पाद खोजें। न मिले तो यहाँ फ़ोटो लेने का विकल्प दिखेगा।"], ["השתמשת בכל הזיהויים להיום. אפשר לחפש בקטלוג בעצמך או להזמין לפי תמונה — טל ושרון יזהו את המוצר.", "आज की सारी पहचानें आप इस्तेमाल कर चुके हैं। कैटलॉग में खुद खोजें या फ़ोटो से ऑर्डर करें — ताल और शेरोन उत्पाद की पहचान करेंगे।"], ["הזיהוי האוטומטי הגיע למכסה היומית של החברה. אפשר לחפש בעצמך או להזמין לפי תמונה.", "स्वचालित पहचान कंपनी की दैनिक सीमा तक पहुँच गई। खुद खोजें या फ़ोटो से ऑर्डर करें।"], ["נותרו לך", "आपके पास बची हैं"], ["זיהויים היום", "पहचानें आज के लिए"], ["גלריה", "गैलरी"]];
+const LANG_LABEL = {he:'עב', ar:'ع', ru:'RU', hi:'हि'};
 let LANG = lsGet('lang') || 'he';
 if(!LANG_LABEL[LANG]) LANG = 'he';
-const TR_MAP = {ar:{}, ru:{}};
+const TR_MAP = {ar:{}, ru:{}, hi:{}};
 TR_DATA.forEach(r => { TR_MAP.ar[r[0]] = r[1]; TR_MAP.ru[r[0]] = r[2]; });
+TR_HI.forEach(r => { TR_MAP.hi[r[0]] = r[1]; });
 const TR_RE = new RegExp(TR_DATA.map(r => r[0]).sort((a, b) => b.length - a.length).map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
 const HEB_RE = /[\u05d0-\u05ea]/;
 const TR_SKIP = '.card-name, .cart-line-name, .sn, .sa, .sc, textarea, script, style';
@@ -1976,10 +2026,10 @@ function applyLang(lang){
   if(b) b.textContent = LANG_LABEL[lang];
   retranslateAll();
 }
-function cycleLang(){ const o = ['he', 'ar', 'ru']; applyLang(o[(o.indexOf(LANG) + 1) % 3]); }
+function cycleLang(){ const o = ['he', 'ar', 'ru', 'hi']; applyLang(o[(o.indexOf(LANG) + 1) % o.length]); }
 function setLang(l){ applyLang(l); if(document.getElementById('entry').classList.contains('open')) showEntry(); }
 function langPickerHtml(){
-  return '<div class="lang-row">' + [['he', 'עברית'], ['ar', 'العربية'], ['ru', 'Русский']].map(x => '<button class="lang-pill ' + (LANG === x[0] ? 'on' : '') + '" onclick="setLang(\'' + x[0] + '\')">' + x[1] + '</button>').join('') + '</div>';
+  return '<div class="lang-row">' + [['he', 'עברית'], ['ar', 'العربية'], ['ru', 'Русский'], ['hi', 'हिन्दी']].map(x => '<button class="lang-pill ' + (LANG === x[0] ? 'on' : '') + '" onclick="setLang(\'' + x[0] + '\')">' + x[1] + '</button>').join('') + '</div>';
 }
 const _confirmOrig = window.confirm.bind(window);
 window.confirm = m => _confirmOrig(trText(m, LANG));
@@ -2183,25 +2233,30 @@ async function shareReceiptPhotos(msg){
 }
 
 
-// ===== מצלמה בתוך האפליקציה: צילום תעודת המשלוח בלי לצאת מהמסך =====
-let camStream = null;
-async function openCamera(){
-  if(rcvPhotos.length >= 3){ showToast('אפשר לצרף עד 3 תמונות'); return; }
-  rcvSnapshot();
+// ===== מצלמה בתוך האפליקציה: תעודת משלוח (עד 3 תמונות) וצילום מוצר בשטח (תמונה אחת) =====
+let camStream = null, camMode = 'receipt';
+async function openCamera(mode){
+  camMode = mode === 'product' ? 'product' : 'receipt';
+  if(camMode === 'receipt'){
+    if(rcvPhotos.length >= 3){ showToast('אפשר לצרף עד 3 תמונות'); return; }
+    rcvSnapshot();
+  }
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ camFallback(); return; }
   try{
     camStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080}}, audio:false});
   }catch(e){ camFallback(); return; }
   closeCameraOverlayOnly();
+  const prod = camMode === 'product';
   const ov = document.createElement('div');
   ov.id = 'camOverlay';
   ov.style.cssText = 'position:fixed; inset:0; z-index:120; background:#000; display:flex; flex-direction:column;';
+  const btn = 'min-width:74px; padding:10px 12px; border-radius:10px; font-family:inherit; font-size:14px;';
   ov.innerHTML = `<video id="camVideo" autoplay playsinline muted style="flex:1; width:100%; object-fit:cover; background:#000;"></video>
-    <div style="position:absolute; top:14px; left:0; right:0; text-align:center; color:#fff; font-size:13px; text-shadow:0 1px 3px #000; padding:0 16px;">מקם את התעודה במסגרת וודא שהכתב קריא</div>
+    <div style="position:absolute; top:14px; left:0; right:0; text-align:center; color:#fff; font-size:13px; text-shadow:0 1px 3px #000; padding:0 16px;">${prod ? 'צלם את המוצר מקרוב, כך שיראו סימונים ומידות' : 'מקם את התעודה במסגרת וודא שהכתב קריא'}</div>
     <div style="position:absolute; bottom:0; left:0; right:0; padding:18px 22px 30px; display:flex; align-items:center; justify-content:space-between; background:linear-gradient(transparent, rgba(0,0,0,.7));">
-      <button onclick="closeCamera()" style="min-width:74px; padding:10px 12px; border:1px solid rgba(255,255,255,.6); border-radius:10px; background:transparent; color:#fff; font-family:inherit; font-size:14px;">ביטול</button>
+      <button onclick="closeCamera()" style="${btn} border:1px solid rgba(255,255,255,.6); background:transparent; color:#fff;">ביטול</button>
       <button onclick="snapCamera()" aria-label="צלם" style="width:70px; height:70px; border-radius:50%; border:4px solid #fff; background:rgba(255,255,255,.25); cursor:pointer;"></button>
-      <button onclick="closeCamera()" style="min-width:74px; padding:10px 12px; border:none; border-radius:10px; background:#fff; color:#000; font-family:inherit; font-size:14px; font-weight:700;">סיום <span id="camCount">${rcvPhotos.length}</span>/3</button>
+      ${prod ? `<button onclick="closeCamera(); openProductGallery();" style="${btn} border:1px solid rgba(255,255,255,.6); background:transparent; color:#fff;">גלריה</button>` : `<button onclick="closeCamera()" style="${btn} border:none; background:#fff; color:#000; font-weight:700;">סיום <span id="camCount">${rcvPhotos.length}</span>/3</button>`}
     </div>`;
   document.body.appendChild(ov);
   const v = document.getElementById('camVideo');
@@ -2216,7 +2271,9 @@ function snapCamera(){
   c.width = Math.round(v.videoWidth * sc);
   c.height = Math.round(v.videoHeight * sc);
   c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
-  addRcvPhoto(c.toDataURL('image/jpeg', 0.7));
+  const data = c.toDataURL('image/jpeg', 0.7);
+  if(camMode === 'product'){ closeCamera(); onProductPhoto(data); return; }
+  addRcvPhoto(data);
   const cnt = document.getElementById('camCount');
   if(cnt) cnt.textContent = rcvPhotos.length;
   if(rcvPhotos.length >= 3){ closeCamera(); showToast('צורפו 3 תמונות'); }
@@ -2228,8 +2285,182 @@ function closeCamera(){
 }
 function camFallback(){
   showToast('לא ניתן להפעיל מצלמה בתוך האפליקציה — נפתחת מצלמת המכשיר');
-  const f = document.getElementById('rcv-file-cam');
+  const f = document.getElementById(camMode === 'product' ? 'prod-file' : 'rcv-file-cam');
   if(f) f.click();
+}
+
+
+// ===== צילום מוצר בשטח: זיהוי (אם זמין), התאמה לקטלוג והזמנה, או הזמנה "לפי תמונה" =====
+let prodPhoto = null, prodState = 'idle', prodResult = null, prodCands = [];
+// צילום לזיהוי זמין למנהל רק אחרי חיפוש בקטלוג שלא החזיר תוצאות (ל-15 דקות). דוד, טל ושרון פטורים.
+const PHOTO_UNLOCK_MS = 15 * 60 * 1000;
+let photoUnlockUntil = 0, lastZeroQuery = '', prodIdentId = null, prodOutcomeKind = null, prodChosen = [], prodLeft = null;
+function photoAllowed(){ return !!(user && user.priv) || nowMs() < photoUnlockUntil; }
+function openProductGallery(){
+  if(!photoAllowed()){ showToast('קודם חפש את המוצר בקטלוג. אם לא נמצא, תופיע כאן אפשרות לצלם אותו.'); return; }
+  const f = document.getElementById('prod-gallery');
+  if(f) f.click();
+}
+function openProductCamera(){
+  if(!photoAllowed()){ showToast('קודם חפש את המוצר בקטלוג. אם לא נמצא, תופיע כאן אפשרות לצלם אותו.'); return; }
+  openCamera('product');
+}
+function sendProdOutcome(kind, items){
+  if(!prodIdentId) return;
+  prodOutcomeKind = kind;
+  logEvent({t:'ident_outcome', identId:prodIdentId, outcome:kind, cands:prodCands.length, items:items || '', at:Date.now()});
+}
+function onProductFile(files){
+  const f = files && files[0];
+  if(!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const sc = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      onProductPhoto(c.toDataURL('image/jpeg', 0.7));
+    };
+    img.src = rd.result;
+  };
+  rd.readAsDataURL(f);
+}
+// נתוני החיפוש שקדם לצילום, לדוח הבקרה: כמה מילים, כמה מהן קיימות בקטלוג בכלל, וכמה פריטים נמצאו בחיפוש רחב
+function searchStats(q){
+  const words = normQ(q).split(' ').filter(w => w.length >= 2);
+  if(!words.length) return {words:0, vocab:0, loose:0};
+  const need = Math.max(1, Math.ceil(words.length / 2));
+  const seen = new Set();
+  let loose = 0;
+  FULLCATALOG.forEach(p => {
+    const hay = p._h || (p._h = normQ(p.name + ' ' + (p.sku || '')));
+    let m = 0;
+    words.forEach(w => { if(hay.includes(w)){ m++; seen.add(w); } });
+    if(m >= need) loose++;
+  });
+  return {words:words.length, vocab:seen.size, loose};
+}
+async function identifyPhoto(photo){
+  if(!LOG_URL || !user) return {ok:false, reason:'no_url'};
+  const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const to = setTimeout(() => { if(ctl) ctl.abort(); }, 35000);
+  try{
+    const r = await fetch(LOG_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify({t:'identify', photo, user:{name:user.name, phone:user.phone}, project:currentSite ? currentSite.name : '', searched:lastZeroQuery, sstats:searchStats(lastZeroQuery)}), signal: ctl ? ctl.signal : undefined});
+    return await r.json();
+  }catch(e){ return {ok:false, reason:'network'}; }
+  finally{ clearTimeout(to); }
+}
+function candidatesFor(res){
+  const raw = [].concat(res.keywords || [], res.type || '', res.material || '', res.connection || '', res.size || '', res.angle || '');
+  const kws = Array.from(new Set(raw.map(x => normQ(String(x))).filter(x => x.length >= 1 && x.length <= 25)));
+  if(!kws.length) return [];
+  const need = kws.length >= 3 ? 2 : 1;
+  const fm = freqMap();
+  const scored = [];
+  FULLCATALOG.forEach((p, i) => {
+    const hay = p._h || (p._h = normQ(p.name + ' ' + (p.sku || '')));
+    let s = 0;
+    kws.forEach(k => { if(hay.includes(k)) s++; });
+    if(s >= need) scored.push({p, s: s * 10 + (fm[p.id] || 0), i});
+  });
+  scored.sort((a, b) => b.s - a.s || a.i - b.i);
+  return scored.slice(0, 8).map(x => x.p);
+}
+function searchCatalog(q, limit){
+  const words = normQ(q).split(' ').filter(Boolean);
+  if(!words.length) return [];
+  const m = FULLCATALOG.filter(p => { const hay = p._h || (p._h = normQ(p.name + ' ' + (p.sku || ''))); return words.every(w => hay.includes(w)); });
+  return rankResults(m, words).slice(0, limit || 8);
+}
+async function onProductPhoto(dataUrl){
+  prodPhoto = dataUrl; prodResult = null; prodCands = []; prodState = 'working';
+  if(prodIdentId && !prodOutcomeKind) sendProdOutcome('none');
+  prodIdentId = null; prodOutcomeKind = null; prodChosen = []; prodLeft = null;
+  document.getElementById('prodPanel').classList.add('open');
+  document.getElementById('overlay').classList.add('open');
+  renderProduct();
+  const res = await identifyPhoto(dataUrl);
+  if(prodPhoto !== dataUrl) return;
+  if(res && typeof res.left === 'number') prodLeft = res.left;
+  if(res && res.ok){ prodResult = res; prodCands = candidatesFor(res); prodState = 'done'; prodIdentId = res.identId || null; }
+  else { prodResult = res || {ok:false}; prodState = 'noai'; }
+  renderProduct();
+}
+function closeProdPanel(){
+  if(prodIdentId && !prodOutcomeKind) sendProdOutcome('none');
+  const p = document.getElementById('prodPanel');
+  if(p) p.classList.remove('open');
+  const ov = document.getElementById('overlay');
+  if(ov) ov.classList.remove('open');
+}
+function prodCardHtml(p){
+  const sup = cheapestSupplier(p.prices), s = SUPPLIERS[sup];
+  const img = p.img ? `<img src="data:image/jpeg;base64,${IMAGES[p.img]}" style="width:58px; height:58px; object-fit:contain; border-radius:8px; background:#fff; border:1px solid var(--line);">` : '<div style="width:58px; height:58px;"></div>';
+  return `<div style="display:flex; gap:10px; background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:9px; margin-bottom:8px;">
+    ${img}
+    <div style="flex:1; min-width:0;"><div style="font-size:13px; font-weight:700; line-height:1.3;">${escH(p.name)}</div>
+      <div style="font-size:11.5px; color:var(--ink-soft); margin-top:2px;">מק״ט ${escH(p.sku || '—')} · ${s.name}: ₪${p.prices[sup].toFixed(2)}</div>
+      <div style="display:flex; gap:6px; margin-top:6px; align-items:center;">
+        <input id="pq-${p.id}" type="number" inputmode="numeric" min="1" value="1" onfocus="this.select()" style="width:64px; padding:7px; border:1px solid var(--line); border-radius:8px; font-family:inherit; background:var(--bg); color:var(--ink);">
+        <button class="add-btn" onclick="prodAdd('${p.id}')" style="flex:1;">הוסף לעגלה</button></div></div></div>`;
+}
+function renderProdList(){
+  const box = document.getElementById('prodList');
+  if(!box) return;
+  box.innerHTML = prodCands.length ? prodCands.map(prodCardHtml).join('') : (prodState === 'working' ? '' : '<div class="empty-cart" style="padding:12px 0;">לא נמצאו התאמות בקטלוג</div>');
+}
+function renderProduct(){
+  const r = prodResult || {};
+  let status = '';
+  if(prodState === 'working') status = '<div style="font-size:13px; margin:10px 0;">⏳ מזהה את המוצר…</div>';
+  else if(prodState === 'done') status = `<div style="font-size:13px; margin:10px 0; line-height:1.5;"><b>זיהוי:</b> ${escH(r.description || '')}${typeof r.confidence === 'number' ? ' <span style="color:var(--ink-soft);">(ביטחון ' + Math.round(r.confidence * 100) + '%)</span>' : ''}${r.notes ? '<br><span style="color:var(--ink-soft);">' + escH(r.notes) + '</span>' : ''}<br><span style="color:var(--copper); font-weight:700;">ההצעות למטה הן מהקטלוג. אשר שזה אכן המוצר לפני ההוספה.</span>${typeof prodLeft === 'number' ? '<br><span style="color:var(--ink-soft);">נותרו לך ' + prodLeft + ' זיהויים היום</span>' : ''}</div>`;
+  else if(prodState === 'noai') status = '<div style="font-size:12.5px; margin:10px 0; color:var(--ink-soft); line-height:1.5;">' + (r.reason === 'user_limit' ? 'השתמשת בכל הזיהויים להיום. אפשר לחפש בקטלוג בעצמך או להזמין לפי תמונה — טל ושרון יזהו את המוצר.' : r.reason === 'limit' ? 'הזיהוי האוטומטי הגיע למכסה היומית של החברה. אפשר לחפש בעצמך או להזמין לפי תמונה.' : 'הזיהוי האוטומטי לא זמין כרגע. אפשר לחפש בקטלוג בעצמך או להזמין לפי תמונה — טל ושרון יזהו את המוצר.') + '</div>';
+  const keepQ = (document.getElementById('prod-q') || {}).value || '';
+  const keepName = (document.getElementById('prod-name') || {}).value;
+  document.getElementById('prodBody').innerHTML = `
+    <img src="${prodPhoto || ''}" style="width:100%; max-height:220px; object-fit:contain; border-radius:10px; background:#000;">
+    <button class="entry-add" onclick="closeProdPanel(); openProductCamera();" style="margin-top:8px;">צלם שוב</button>
+    <button class="entry-add" onclick="openProductGallery()" style="margin-top:6px;">או בחר תמונה מהגלריה</button>
+    ${status}
+    <div id="prodList"></div>
+    <input id="prod-q" class="fld" placeholder="חפש בקטלוג" value="${escH(keepQ)}" oninput="prodSearch(this.value)">
+    <div style="font-weight:700; font-size:13.5px; margin:16px 0 4px;">לא מצאת? הזמן לפי תמונה</div>
+    <input id="prod-name" class="fld" placeholder="תיאור המוצר" value="${escH(keepName != null ? keepName : (r.description || ''))}">
+    <div style="display:flex; gap:8px;"><input id="prod-qty" class="fld" type="number" inputmode="numeric" min="1" value="1"><input id="prod-unit" class="fld" value="יח׳"></div>
+    <button class="send-btn" style="margin-top:10px;" onclick="prodOrderByPhoto()">הוסף לעגלה כפריט לפי תמונה</button>`;
+  renderProdList();
+}
+function prodSearch(q){ prodCands = q.trim() ? searchCatalog(q, 8) : (prodResult && prodResult.ok ? candidatesFor(prodResult) : []); renderProdList(); }
+function prodAdd(id){
+  const inp = document.getElementById('pq-' + id);
+  const v = parseInt(inp ? inp.value : 1) || 0;
+  if(v <= 0){ showToast('בחר כמות'); return; }
+  if(!(id in cart)){
+    const d = dupWarning(id), p = findProduct(id);
+    if(d && !confirm('הפריט "' + (p ? p.name : '') + '" כבר הוזמן באתר "' + currentSite.name + '" לפני ' + d.hours + ' שעות (' + d.qty + ' ' + (p ? p.unit : '') + '). להוסיף שוב?')) return;
+  }
+  cart[id] = (cart[id] || 0) + v;
+  saveCart();
+  refreshCartUI();
+  showToast('נוסף לעגלה');
+  const pp = findProduct(id); prodChosen.push(pp ? pp.name : id); sendProdOutcome('catalog', prodChosen.join(' ; '));
+}
+function prodOrderByPhoto(){
+  const name = document.getElementById('prod-name').value.trim();
+  const qty = parseInt(document.getElementById('prod-qty').value) || 0;
+  const unit = document.getElementById('prod-unit').value.trim() || 'יח׳';
+  if(!name){ showToast('כתוב תיאור לפריט'); return; }
+  if(qty <= 0){ showToast('בחר כמות'); return; }
+  const id = 'x' + Date.now().toString(36) + Math.floor(Math.random() * 100);
+  customItems[id] = {id, name, unit, custom:true, prices:{}, photo:prodPhoto};
+  sendProdOutcome('photo_order', name);
+  cart[id] = qty;
+  saveCart();
+  refreshCartUI();
+  closeProdPanel();
+  showToast('נוסף לעגלה');
 }
 
 let toastTimer;
