@@ -262,6 +262,56 @@
   .pbadge.pj{ background:#E4F3E8; color:var(--success); }
   .ind-note{ font-size:10.5px; color:var(--ink-soft); margin-top:3px; }
   .sec-title{ grid-column:1/-1; font-weight:800; font-size:14px; margin:12px 2px 2px; }
+
+  /* ===== תצוגת מחשב (Windows / Mac): מסך רחב, עכבר ומקלדת. לא משפיע על הטלפון ===== */
+  .kbd-hint{ display:none; padding:0 32px 12px; font-size:12px; color:var(--ink-soft); }
+  .kbd-hint kbd{ font-family:inherit; font-size:11.5px; font-weight:700; background:var(--paper); border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:1px 6px; margin:0 2px; color:var(--ink); }
+  @media (min-width:1024px){
+    .app{ max-width:1360px; padding-bottom:60px; }
+    .topbar{ padding:18px 32px 14px; }
+    .brand-logo{ height:38px; }
+    .brand-app-name{ font-size:15px; max-width:none; }
+    .cart-btn{ width:48px; height:48px; }
+    .lang-btn{ height:48px; }
+    .intro{ padding:2px 32px 14px; font-size:14.5px; }
+    .tabs{ padding:0 32px 16px; flex-wrap:wrap; overflow-x:visible; }
+    .site-chip{ margin:0 32px 10px; max-width:720px; font-size:13.5px; }
+    #grid{ padding:0 32px; }
+    #fullResults, #grid:not(:has(#fullResults)){ display:grid; grid-template-columns:repeat(auto-fill,minmax(400px,1fr)); gap:14px; align-items:stretch; }
+    #fullResults .entry-add, #fullResults .empty-cart{ grid-column:1/-1; }
+    .full-search-bar{ padding:0 0 14px; max-width:820px; }
+    .full-search-bar input{ font-size:15.5px; padding:13px 14px; }
+    .full-search-bar select{ font-size:14px; max-width:200px; padding:12px 10px; }
+    #grid > .entry-add{ max-width:360px; }
+    .card{ padding:14px; transition:box-shadow .15s, border-color .15s; }
+    .card-img{ width:84px; height:84px; }
+    .card-name{ font-size:15px; }
+    .stepper button{ width:32px; height:32px; }
+    .stepper input.qty-in{ width:52px; min-width:52px; }
+    .tab:hover{ border-color:var(--ink); }
+    .card:hover{ border-color:var(--pipe-blue); box-shadow:0 2px 10px rgba(27,38,52,.10); }
+    .add-btn:hover{ filter:brightness(1.1); }
+    .send-btn:hover{ filter:brightness(1.08); }
+    .stepper button:hover{ background:#EEF2F4; }
+    .entry-add:hover, .site-chip:hover, .site-card:hover{ border-color:var(--pipe-blue); }
+    input:focus, select:focus, textarea:focus{ outline:2px solid var(--pipe-blue); outline-offset:1px; }
+    button:focus-visible{ outline:2px solid var(--pipe-blue); outline-offset:2px; }
+    .drawer{
+      top:0; bottom:0; left:0; right:auto; margin:0;
+      width:480px; max-width:92vw; max-height:none; height:100vh;
+      border-radius:0 18px 18px 0;
+      transform:translateX(-105%);
+      box-shadow:6px 0 30px rgba(27,38,52,.18);
+    }
+    .drawer.open{ transform:translateX(0); }
+    #ordersPanel, #rcvPanel, #prodPanel{ width:620px; }
+    .drawer-head{ padding:22px 24px 12px; flex-shrink:0; }
+    .drawer-head h2{ font-size:18px; }
+    .drawer-body{ padding:0 24px 24px; flex:1; min-height:0; }
+    .entry-in{ max-width:560px; padding-top:60px; }
+    .toast{ bottom:32px; font-size:14.5px; }
+    .kbd-hint{ display:block; }
+  }
 </style>
 </head>
 <body>
@@ -287,6 +337,7 @@
   <div class="site-chip" id="logBar" onclick="flushLog()" style="display:none; background:#FBE9E7; border-color:var(--urgent);"></div>
   <div class="intro">כל עובד יכול להזמין ישירות מהקטלוג. <b>המחיר הזול ביותר</b> מסומן אוטומטית בכל פריט.</div>
 
+  <div class="kbd-hint">קיצורי מקלדת: <kbd>/</kbd> או <kbd>Ctrl</kbd>+<kbd>K</kbd> חיפוש · <kbd>Alt</kbd>+<kbd>C</kbd> עגלה · <kbd>Esc</kbd> סגירה · <kbd>Enter</kbd> בשדה כמות = הוסף לעגלה</div>
   <div class="tabs" id="tabs"></div>
   <div class="grid" id="grid"></div>
 
@@ -2964,6 +3015,27 @@ function showToast(msg){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=> t.classList.remove('show'), 2200);
 }
+
+// ===== קיצורי מקלדת למחשב =====
+document.addEventListener('keydown', function(e){
+  try{
+    const t = e.target, tag = t && t.tagName;
+    const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable);
+    if(e.key === 'Escape'){
+      const ov = document.getElementById('overlay');
+      if(ov && ov.classList.contains('open')){ ov.click(); e.preventDefault(); }
+      return;
+    }
+    if(document.getElementById('entry').classList.contains('open')) return;
+    const focusSearch = () => {
+      const el = document.getElementById('fullSearchInput');
+      if(el){ el.focus(); el.select(); e.preventDefault(); }
+    };
+    if((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')){ focusSearch(); return; }
+    if(e.altKey && (e.code === 'KeyC')){ openCart(); e.preventDefault(); return; }
+    if(e.key === '/' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey){ focusSearch(); }
+  }catch(_){}
+});
 
 renderTabs();
 renderGrid();
