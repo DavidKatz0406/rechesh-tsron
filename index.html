@@ -1136,7 +1136,11 @@ const SHARON_WHATSAPP = '972524672267';   // יעד ההודעות שמסומנ�
 // מי מורשה ולאילו פרויקטים — מגיע מהשרת לפי הכניסה בבקרה (rkMe). הטלפונים של המנהלים לא נמצאים יותר בדף
 
 const APPROVER = { name:'טל', phone:'0524672267', whatsapp:'972524672267' };
-const APPROVAL_LIMIT = 10000;   // הזמנה שסכומה (כולל מע״מ) גבוה מזה — דורשת אישור של טל
+const APPROVAL_LIMIT = 10000;
+// עד מוצאי שבת 28.11.2026: וואטסאפ במקביל לתור בבקרה (החלטת דוד). מיום ראשון — ההזמנה עוברת רק דרך הבקרה: שרון מהתור, טל מאשר שם
+const WA_UNTIL = new Date('2026-11-29T00:00:00+02:00').getTime();
+function waOn(){ return nowMs() < WA_UNTIL; }
+let lastMode = '';   // 'approval' / 'direct' — מה נאמר למנהל אחרי השליחה (כשאין וואטסאפ)   // הזמנה שסכומה (כולל מע״מ) גבוה מזה — דורשת אישור של טל
 // תקציב חודשי לפרויקט (כולל מע״מ), לפי מזהה פרויקט. דוגמה: {p15: 30000, p4: 50000}. ריק = בלי תקציב, רק מוצג כמה הוזמן.
 const BUDGETS = {};
 const BUDGET_REQUIRES_APPROVAL = false;   // true: הזמנה שחורגת מהתקציב החודשי דורשת אישור של טל
@@ -1493,12 +1497,13 @@ function openApprovalWA(){
   savePending();
   renderOrderList();
 }
-function markApproved(){
+function markApproved(remote){
   if(!pending) return;
   pending.approved = true;
   const apAt = Date.now();
   pending.orders.forEach(o => { if(o.logBase) o.logBase.approvedAt = apAt; });
-  if(pending.orders[0] && pending.orders[0].oid) logEvent({t:'approved', oid:pending.orders[0].oid, at:Date.now()});
+  if(!remote && pending.orders[0] && pending.orders[0].oid) logEvent({t:'approved', oid:pending.orders[0].oid, at:Date.now()});   // remote: טל כבר אישר בבקרה ונרשם בשמו
+  if(!waOn()){ pending.finished = true; savePending(); lastMode = 'direct'; lastOrders = pending.orders; lastOrders.forEach(o => { o.done = true; }); renderOrderList(); return; }
   pending.note = { done: false, text: '*אישור הזמנה*\nההזמנה לפרויקט ' + pending.siteName + ' אושרה על ידי ' + APPROVER.name + '.\nההודעות הבאות מוכנות להעברה לספקים.' };
   lastOrders = pending.orders;
   savePending();
@@ -1533,6 +1538,17 @@ function finishSend(orders, awaited){
   });
   recordHistory();
   orders.forEach(o => logOrderRow(o, true));   // ההזמנה נרשמת ביומן כבר עכשיו (גם לפני אישור טל) — שרון רואה ומדפיסה, וטל/שרון/דוד מקבלים התראה
+  if(!waOn()){
+    // מיום ראשון: אין וואטסאפ. ההזמנה כבר בתור של שרון בבקרה (או ממתינה שם לאישור של טל)
+    pending = null; savePending();
+    orders.forEach(o => { o.done = true; o.sentLogged = true; });
+    lastMode = needsApproval(total) ? 'approval' : 'direct';
+    lastOrders = orders;
+    saveLast();
+    closeCart();
+    showFallbackPanel();
+    return;
+  }
   if(needsApproval(total)){
     pending = { by: mgrPhone, siteName: currentSite.name, total, orders, approvalText: buildApprovalText(orders), approvalSent: false, approved: false, finished: false };
     savePending();
@@ -1592,6 +1608,14 @@ function renderOrderList(){
     list.innerHTML = html;
     return;
   }
+  if(!waOn() && lastMode){
+    intro.innerHTML = lastMode === 'approval'
+      ? '✓ <b>ההזמנה נקלטה ונשלחה לאישור של ' + APPROVER.name + '.</b> הוא מקבל התראה ומאשר בבקרה, ואז ההזמנה עוברת לשרון. המצב יופיע ב"ההזמנות שלי".'
+      : '✓ <b>ההזמנה נקלטה ועברה לשרון.</b> אין צורך לשלוח וואטסאפ — שרון מקבלת התראה ומטפלת מהבקרה. המצב והספק יופיעו ב"ההזמנות שלי".';
+    list.innerHTML = lastOrders.map(o => `<div style="background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px; font-size:14px;"><b>${escH(o.name)}</b> <span style="color:var(--ink-soft); font-size:12.5px;">· ${o.count} ${o.sup === '__list' ? 'תמונות' : 'פריטים'} · מזהה ${escH(o.rowId || '')}</span></div>`).join('')
+      + '<button class="send-btn" onclick="closeFallback()" style="margin-top:6px;">סגור</button>';
+    return;
+  }
   intro.textContent = lastOrders.length > 1
     ? 'ההזמנה מפוצלת לפי ספק. שלח כל הודעה בנפרד — שרון מעבירה כל אחת לספק כמו שהיא, בלי לערוך.'
     : 'ההודעה נפתחה בווצאפ. אם לא נפתחה, לחץ על הכפתור.';
@@ -1619,10 +1643,26 @@ async function fetchMyOrders(){
     const j = await r.json();
     myOrders = Array.isArray(j.orders) ? j.orders : [];
   }catch(e){ return; }
+  checkPendingRemote();
   renderMyOrdersBar();
   const p = document.getElementById('ordersPanel');
   if(p && p.classList.contains('open')) renderMyOrders();
 }
+// הזמנה שממתינה לאישור: אם טל אישר (או דחה) בבקרה — מעדכנים כאן לבד, בלי לחכות לוואטסאפ
+function checkPendingRemote(){
+  if(!pending || pending.finished || pending.approved) return;
+  const oid = pending.orders[0] && pending.orders[0].oid;
+  if(!oid) return;
+  const mine = myOrders.filter(o => String(o.id).indexOf(oid + '-') === 0);
+  if(!mine.length) return;
+  if(mine.some(o => o.stage === 'cancelled')){
+    pending = null; savePending(); renderOrderList();
+    showToast('ההזמנה לא אושרה ובוטלה — הפרטים ב"ההזמנות שלי"');
+    return;
+  }
+  if(mine.every(o => o.stage !== 'approval')){ markApproved(true); showToast('✓ ' + APPROVER.name + ' אישר את ההזמנה בבקרה'); }
+}
+setInterval(() => { if(pending && !pending.finished && !pending.approved && !document.hidden) fetchMyOrders(); }, 30000);
 function renderMyOrdersBar(){
   const el = document.getElementById('myOrdersBar');
   if(!el) return;
