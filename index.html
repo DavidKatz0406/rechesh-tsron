@@ -1447,11 +1447,32 @@ function selectSite(id){
 
 // ===== הזמנה מתוך אפליקציית הבקרה: #order={"p":"p4","items":[{"n":"שם","q":10,"u":"יח׳"}]} =====
 // הבקרה שולחת את החוסרים של האתר; הם נכנסים לעגלה של הפרויקט (פריט מהקטלוג — לפי שם, אחרת כפריט חופשי)
-let bakaraOrder = null;
-try{
-  const m = /[#&]order=([^&]+)/.exec(location.hash || '');
-  if(m){ bakaraOrder = JSON.parse(decodeURIComponent(m[1])); history.replaceState(null, '', location.pathname + location.search); }
-}catch(e){ bakaraOrder = null; }
+// #as=05… — כשהרכש פתוח כלשונית בתוך הבקרה, הבקרה מעבירה את הטלפון של המשתמש המחובר (נכנסים בלי להקליד)
+// אותה בקשה יכולה להגיע גם כשהרכש כבר פתוח (שינוי ב-hash) — מטופל ב-hashchange
+const EMBED = (()=>{ try{ return window.self !== window.top; }catch(e){ return true; } })();
+let bakaraOrder = null, bakaraAs = null;
+function readBakaraHash(){
+  const h = location.hash || '';
+  try{
+    const m = /[#&]order=([^&]+)/.exec(h);
+    bakaraOrder = m ? JSON.parse(decodeURIComponent(m[1])) : null;
+  }catch(e){ bakaraOrder = null; }
+  const a = /[#&]as=([0-9+]+)/.exec(h);
+  bakaraAs = a ? normPhone(decodeURIComponent(a[1])) : null;
+  if(/[#&](order|as)=/.test(h)) history.replaceState(null, '', location.pathname + location.search);
+}
+readBakaraHash();
+window.addEventListener('hashchange', () => {
+  if(!/[#&](order|as)=/.test(location.hash || '')) return;
+  readBakaraHash();
+  if(bakaraAs && isKnown(bakaraAs) && bakaraAs !== mgrPhone){
+    setUser(bakaraAs); lsSet('mgrPhone', bakaraAs); loadPending();
+    currentSite = null; renderSiteChip();
+  }
+  if(!mgrPhone){ showEntry(); return; }
+  if(bakaraOrder) applyBakaraOrder();
+  else if(!currentSite) showEntry();
+});
 function applyBakaraOrder(){
   const o = bakaraOrder;
   if(!o || !mgrPhone) return;
@@ -1491,11 +1512,13 @@ function logout(){
   showEntry();
 }
 function initSite(){
+  if(bakaraAs && isKnown(bakaraAs)) lsSet('mgrPhone', bakaraAs);   // נפתח מתוך הבקרה: המשתמש המחובר בבקרה
   const ph = lsGet('mgrPhone');
   if(ph && isKnown(ph)) setUser(ph);
   if(mgrPhone){
     loadPending();
     const mine = myProjects();
+    if(bakaraOrder && bakaraOrder.p && mine.some(x => x.id === bakaraOrder.p)){ selectSite(bakaraOrder.p); return; }   // הזמנה מהבקרה: ישר לפרויקט שלה
     const id = lsGet('projId');
     const s = mine.find(x => x.id === id) || (!user.priv && mine.length === 1 ? mine[0] : null);
     if(s){ selectSite(s.id); return; }
@@ -1575,6 +1598,7 @@ function openLink(url){
     document.body.appendChild(link);
   }
   link.href = url;
+  if(EMBED){ link.target = '_blank'; link.rel = 'noopener'; }   // בתוך הבקרה: וואטסאפ נפתח בחלון משלו (אתר וואטסאפ לא נפתח בתוך מסגרת)
   link.click();
 }
 function clip(text){ try{ if(navigator.clipboard) navigator.clipboard.writeText(text); }catch(e){} }
