@@ -331,6 +331,7 @@
   </div>
 
   <div class="site-chip" id="siteChip" onclick="showEntry()"></div>
+  <div class="site-chip" id="budgetBar" style="display:none;"></div>
   <div class="site-chip" id="pendingBar" onclick="showFallbackPanel()" style="display:none; background:var(--copper-bg); border-color:var(--copper);"></div>
   <div class="site-chip" id="myOrdersBar" onclick="openMyOrders()" style="display:none;"></div>
   <div class="site-chip" id="queuedBar" onclick="openQueued()" style="display:none;"></div>
@@ -1144,10 +1145,26 @@ let lastMode = '';   // 'approval' / 'direct' — מה נאמר למנהל אח�
 // תקציב חודשי לפרויקט (כולל מע״מ), לפי מזהה פרויקט. דוגמה: {p15: 30000, p4: 50000}. ריק = בלי תקציב, רק מוצג כמה הוזמן.
 const BUDGETS = {};
 const BUDGET_REQUIRES_APPROVAL = false;   // true: הזמנה שחורגת מהתקציב החודשי דורשת אישור של טל
-let monthSpend = null;                    // {project, value} מתוך היומן
+let monthSpend = null;                    // {project, value, budget} מתוך היומן — התקציב נקבע במשרד (בקרה ← לפי פרויקט) ונשמר בגיליון
+// צבע ניצול התקציב: ירוק בתוך המסגרת, צהוב מ-85% (מתקרב לסוף), אדום מעל 100%
+const BUDGET_WARN = 0.85;
+function budgetOf(){ return (currentSite && monthSpend && monthSpend.project === currentSite.name && monthSpend.budget) || (currentSite && BUDGETS[currentSite.id]) || 0; }
+function budgetTone(p){ return p > 1 ? {c:'var(--urgent)', bg:'#FBE9E7', t:'חריגה'} : p >= BUDGET_WARN ? {c:'#C98A00', bg:'#FFF6DC', t:'מתקרב לסוף התקציב'} : {c:'var(--success)', bg:'var(--paper)', t:'בתוך המסגרת'}; }
+function renderBudgetBar(){
+  const el = document.getElementById('budgetBar');
+  if(!el) return;
+  const b = budgetOf();
+  if(!b || !monthSpend || !currentSite || monthSpend.project !== currentSite.name){ el.style.display = 'none'; el.innerHTML = ''; return; }
+  const spent = monthSpend.value, p = spent / b, tone = budgetTone(p);
+  el.style.display = 'block';
+  el.style.background = tone.bg; el.style.borderColor = tone.c;
+  el.innerHTML = '<div style="display:flex; justify-content:space-between; gap:8px;"><div>📊 תקציב החודש: <b>₪' + fmtN(spent) + '</b> מתוך ₪' + fmtN(b) + '</div><b style="color:' + tone.c + '; white-space:nowrap;">' + Math.round(p * 100) + '%</b></div>'
+    + '<div style="height:7px; background:var(--line); border-radius:4px; margin:6px 0 4px; overflow:hidden;"><div style="height:100%; width:' + Math.min(100, Math.round(p * 100)) + '%; background:' + tone.c + ';"></div></div>'
+    + '<div style="color:' + tone.c + '; font-weight:700;">' + (p > 1 ? '⚠ חריגה של ₪' + fmtN(spent - b) + ' מהתקציב החודשי' : tone.t + ' · נשארו ₪' + fmtN(b - spent)) + '</div>';
+}
 function overBudget(t){
   if(!BUDGET_REQUIRES_APPROVAL || !currentSite || !monthSpend || monthSpend.project !== currentSite.name) return false;
-  const b = BUDGETS[currentSite.id] || 0;
+  const b = budgetOf();
   return b > 0 && monthSpend.value + t > b;
 }
 function needsApproval(totalInclVat){ return (totalInclVat > APPROVAL_LIMIT || overBudget(totalInclVat)) && !(rkMe && rkMe.approver); }
@@ -1174,6 +1191,7 @@ function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
 function renderSiteChip(){
   const el = document.getElementById('siteChip');
   if(!el) return;
+  renderBudgetBar();
   el.innerHTML = currentSite
     ? '<div>פרויקט: <b>' + escH(currentSite.name) + '</b></div><span class="sw">החלף פרויקט ›</span>'
     : '';
@@ -1924,22 +1942,23 @@ async function fetchSpend(){
   try{
     const r = await fetch(LOG_URL + '?action=spend&project=' + encodeURIComponent(name));
     const j = await r.json();
-    if(typeof j.spend === 'number') monthSpend = {project:name, value:j.spend};
+    if(typeof j.spend === 'number') monthSpend = {project:name, value:j.spend, budget:Number(j.budget) || 0};
   }catch(e){}
+  renderBudgetBar();
 }
 function budgetBoxHtml(cartTotal){
   if(!LOG_URL || !currentSite || !monthSpend || monthSpend.project !== currentSite.name) return '';
-  const b = BUDGETS[currentSite.id] || 0;
+  const b = budgetOf();
   const spent = monthSpend.value, after = spent + cartTotal;
   const box = 'margin-top:12px; background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:12.5px; line-height:1.6;';
   if(!b){
     return `<div style="${box}">📊 החודש הוזמן באתר: <b>₪${fmtN(spent)}</b><br>עם העגלה הזו: <b>₪${fmtN(after)}</b> <span style="color:var(--ink-soft);">(כולל מע״מ)</span></div>`;
   }
   const left = b - after, over = left < 0;
-  const pct = Math.min(100, Math.round(after / b * 100));
-  return `<div style="${box} ${over ? 'border-color:var(--urgent);' : ''}">
-    <div style="display:flex; justify-content:space-between;"><b>תקציב חודשי: ₪${fmtN(b)}</b><span style="color:var(--ink-soft);">${pct}%</span></div>
-    <div style="height:7px; background:var(--line); border-radius:4px; margin:6px 0; overflow:hidden;"><div style="height:100%; width:${pct}%; background:${over ? 'var(--urgent)' : 'var(--success)'};"></div></div>
+  const pct = Math.min(100, Math.round(after / b * 100)), tone = budgetTone(after / b);
+  return `<div style="${box} border-color:${tone.c}; background:${tone.bg};">
+    <div style="display:flex; justify-content:space-between;"><b>תקציב חודשי: ₪${fmtN(b)}</b><b style="color:${tone.c};">${Math.round(after / b * 100)}%</b></div>
+    <div style="height:7px; background:var(--line); border-radius:4px; margin:6px 0; overflow:hidden;"><div style="height:100%; width:${pct}%; background:${tone.c};"></div></div>
     הוזמן ₪${fmtN(spent)} · עגלה זו ₪${fmtN(cartTotal)} · ${over ? '<b style="color:var(--urgent);">חריגה של ₪' + fmtN(-left) + '</b>' : 'יתרה ₪' + fmtN(left)}
     ${over && BUDGET_REQUIRES_APPROVAL ? '<br><b>ההזמנה חורגת מהתקציב ונדרש אישור של ' + APPROVER.name + '.</b>' : (over ? '<br>ההזמנה חורגת מהתקציב החודשי של הפרויקט.' : '')}
   </div>`;
@@ -2769,7 +2788,7 @@ function logOrderRow(o, pre){
   const ev = {t:'order', oid:b.oid, user:b.user, project:b.project, total:b.total, needsApproval:b.needsApproval, meta:b.meta,
     createdAt:b.createdAt, approvedAt:b.approvedAt || null, rows:[row], at:Date.now()};
   if(pre) ev.pre = true;   // נרשם בלחיצה על "שלח": בהזמנה שממתינה לאישור טל, "נשלח לשרון" יתמלא רק כשתישלח בפועל
-  if(monthSpend && monthSpend.project === b.project) monthSpend.value += o.sub * 1.18;
+  if(monthSpend && monthSpend.project === b.project){ monthSpend.value += o.sub * 1.18; renderBudgetBar(); }
   if(row.photos) sendNow(ev).then(r => { if(r === 'failed') o.logged = false; });
   else { logEvent(ev); beaconEvent(ev); }
 }
