@@ -29,6 +29,8 @@
   .blk{ margin-bottom:18px; }
   .pg{ border-bottom:2px dashed #bbb; padding-bottom:14px; margin-bottom:14px; }
   .err{ padding:30px 14px; font-size:16px; }
+  .tw{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .tw table{ min-width:640px; }
   @media print{
     .bar{ display:none; }
     main{ padding:0; }
@@ -37,6 +39,7 @@
     .pg{ border:0; padding:0; margin:0; page-break-after:always; break-after:page; }
     .pg:last-child{ page-break-after:auto; break-after:auto; }
     .blk{ break-inside:avoid; page-break-inside:avoid; }
+    .tw{ overflow:visible; } .tw table{ min-width:0; }
   }
 </style>
 </head>
@@ -61,6 +64,21 @@
   };
   var d;
   try{ d = JSON.parse(decodeURIComponent(location.hash.slice(1))); }catch(e){ d = null; }
+  if(d && d.mode === "report" && Array.isArray(d.rows)){   // דוח חודשי לפי פרויקט (מהבקרה: 📊 לפי פרויקט)
+    var ml = String(d.month || "").slice(5) + "/" + String(d.month || "").slice(0, 4);
+    var pct = function(r){ return r.budget ? Math.round(r.spend / r.budget * 100) + "%" : "—"; };
+    out.innerHTML = '<h1>דוח רכש חודשי — ' + esc(ml) + '</h1><div class="meta">ט.ש. מי-רון · הוזמן כולל מע״מ, מול התקציב החודשי · הודפס ' + when(Date.now()) + (d.who ? ' ע״י ' + esc(d.who) : '') + '</div>'
+      + '<div class="tw"><table><thead><tr><th>פרויקט</th><th>הוזמן</th><th>תקציב</th><th>ניצול</th><th>הזמנות</th><th>ממתינות לטל</th><th>לא הועברו</th><th>בדרך</th><th>חריגות</th><th>זיכויים</th></tr></thead><tbody>'
+      + d.rows.map(function(r){ return '<tr' + (r.budget && r.spend > r.budget ? ' style="font-weight:700"' : '') + '><td>' + esc(r.project) + '</td><td class="q">' + money(r.spend) + '</td><td class="q">' + (r.budget ? money(r.budget) : '—') + '</td><td class="q">' + pct(r) + (r.budget && r.spend > r.budget ? ' ⚠' : '') + '</td><td class="q">' + (r.n || 0) + '</td><td class="q">' + (r.tal || '') + '</td><td class="q">' + (r.open || '') + '</td><td class="q">' + (r.transit || '') + '</td><td class="q">' + (r.exc || '') + '</td><td class="q">' + (r.credits || '') + '</td></tr>'; }).join('')
+      + '<tr style="font-weight:700"><td>סה״כ</td><td class="q">' + money(d.total) + '</td><td class="q">' + (d.totalBudget ? money(d.totalBudget) : '—') + '</td><td class="q">' + (d.totalBudget ? Math.round(d.total / d.totalBudget * 100) + '%' : '—') + '</td><td colspan="6"></td></tr></tbody></table></div>'
+      + '<div class="foot">"ממתינות לטל", "לא הועברו", "בדרך", "חריגות" ו"זיכויים" — מצב נוכחי בזמן ההדפסה. ⚠ = מעל התקציב.</div>';
+    document.getElementById("ttl").textContent = "🧾 דוח רכש חודשי — " + ml;
+    var ios0 = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    document.getElementById("hint").textContent = ios0 ? "באייפון: אם חלון ההדפסה לא נפתח — לחץ על כפתור השיתוף של ספארי ובחר \"הדפסה\"." : "";
+    document.getElementById("go").onclick = function(){ window.print(); };
+    if(!ios0) setTimeout(function(){ window.print(); }, 300);
+    return;
+  }
   if(!d || !Array.isArray(d.orders)){ out.innerHTML = '<div class="err">אין הזמנות להדפסה. פתח את הדף מכפתור "הדפס" בבקרה.</div>'; document.getElementById("go").style.display = "none"; return; }
   var page = d.mode === "page";
   var stTxt = function(o){ return o.stage === "tal" ? "ממתינה לאישור טל" : o.stage === "ok" ? "אושרה ע״י טל" : "לא נדרש אישור טל"; };
