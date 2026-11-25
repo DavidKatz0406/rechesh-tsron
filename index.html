@@ -1699,6 +1699,7 @@ function finishSend(orders, awaited){
     o.logBase = base;
   });
   recordHistory();
+  orders.forEach(o => logOrderRow(o, true));   // ההזמנה נרשמת ביומן כבר עכשיו (גם לפני אישור טל) — שרון רואה ומדפיסה, וטל/שרון/דוד מקבלים התראה
   if(needsApproval(total)){
     pending = { by: mgrPhone, siteName: currentSite.name, total, orders, approvalText: buildApprovalText(orders), approvalSent: false, approved: false, finished: false };
     savePending();
@@ -2876,11 +2877,16 @@ function prodOrderByPhoto(){
 }
 
 
-// ===== רישום ביומן רק בשליחה בפועל, וחיפוש בהזמנות שלי =====
+// ===== רישום ביומן: השורה נפתחת כשהמנהל לוחץ "שלח" (pre), והשליחה לשרון בפועל נרשמת כאירוע "sent". חיפוש בהזמנות שלי =====
 let ordersTimer = null, ordQuery = '';
-function logOrderRow(o){
-  if(!o || !o.rowId || !o.logBase || o.logged) return;
+function logOrderRow(o, pre){
+  if(!o || !o.rowId || !o.logBase) return;
+  if(o.logged){
+    if(!pre && !o.sentLogged){ o.sentLogged = true; const sev = {t:'sent', rowId:o.rowId, at:Date.now()}; logEvent(sev); beaconEvent(sev); }
+    return;
+  }
   o.logged = true;
+  if(!pre) o.sentLogged = true;
   const b = o.logBase;
   const row = {id:o.rowId, supplier:o.name, items:o.items, sub:Math.round(o.sub * 100) / 100};
   if(o.links && o.links.length) row.links = o.links;
@@ -2890,6 +2896,7 @@ function logOrderRow(o){
   }
   const ev = {t:'order', oid:b.oid, user:b.user, project:b.project, total:b.total, needsApproval:b.needsApproval, meta:b.meta,
     createdAt:b.createdAt, approvedAt:b.approvedAt || null, rows:[row], at:Date.now()};
+  if(pre) ev.pre = true;   // נרשם בלחיצה על "שלח": בהזמנה שממתינה לאישור טל, "נשלח לשרון" יתמלא רק כשתישלח בפועל
   if(monthSpend && monthSpend.project === b.project) monthSpend.value += o.sub * 1.18;
   if(row.photos) sendNow(ev).then(r => { if(r === 'failed') o.logged = false; });
   else { logEvent(ev); beaconEvent(ev); }
