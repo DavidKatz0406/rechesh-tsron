@@ -431,6 +431,9 @@
   </div>
 </div>
 
+<!-- כניסה: אותו חשבון כמו בבקרה (Firebase, אותו דומיין) — אין יותר כניסה לפי מספר טלפון בלבד -->
+<script src="../bakaraapp/vendor/firebase-app-compat.js"></script>
+<script src="../bakaraapp/vendor/firebase-auth-compat.js"></script>
 <script>
 const SUPPLIERS = {
   shal:   { name:'ש.א.ל',        color:'#0A6AB0' },
@@ -1044,6 +1047,20 @@ function closeCart(){
 // אחרי הפריסה של הסקריפט מדביקים כאן את כתובת "אפליקציית האינטרנט". כל עוד זה ריק — אין רישום.
 const LOG_URL = 'https://script.google.com/macros/s/AKfycbz9ylijHc1QFxPMXzKv0bD-zwniJ2AlKmAv5SIDoifpy_NTU2hqSTAMPj3Uzs01AI4mkg/exec';
 let logFlushing = false;
+// אסימון הכניסה של הבקרה מצורף לכל פנייה לשרת הרכש (POST: שדה token, GET: פרמטר token). השרת מזהה את המשתמש לפיו
+const _rkFetch = window.fetch.bind(window);
+window.fetch = async function(url, opts){
+  const u = String(url && url.url || url);
+  if(!LOG_URL || u.indexOf(LOG_URL) !== 0) return _rkFetch(url, opts);
+  const tok = await rkToken();
+  if(!tok) return _rkFetch(url, opts);
+  if(opts && typeof opts.body === 'string'){
+    try{ const b = JSON.parse(opts.body); b.token = tok; opts = Object.assign({}, opts, {body:JSON.stringify(b)}); }catch(e){}
+  } else if(!opts || !opts.method || opts.method === 'GET'){
+    url = u + (u.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(tok);
+  }
+  return _rkFetch(url, opts);
+};
 function logEvent(ev){
   if(!LOG_URL) return;
   try{
@@ -1095,7 +1112,7 @@ async function flushLog(){
 // שליחה "מהירה" שורדת מעבר לרקע (פתיחת וואטסאפ מעבירה את האפליקציה לרקע): השרת מדלג על הזמנה שכבר נרשמה
 function beaconEvent(ev){
   try{
-    if(navigator.sendBeacon && LOG_URL) navigator.sendBeacon(LOG_URL, new Blob([JSON.stringify(ev)], {type:'text/plain;charset=UTF-8'}));
+    if(navigator.sendBeacon && LOG_URL) navigator.sendBeacon(LOG_URL, new Blob([JSON.stringify(rkTok ? Object.assign({}, ev, {token:rkTok}) : ev)], {type:'text/plain;charset=UTF-8'}));
   }catch(e){}
 }
 function beaconQueuedOrders(){
@@ -1116,20 +1133,8 @@ function renderLogBar(){
 const SHARON_WHATSAPP = '972524672267';   // יעד ההודעות שמסומנות "לשרון": כרגע המספר של טל (המספר של שרון: 972528633259)
 // ===== משתמשים, פרויקטים ואישורים =====
 // מורשים להזמין לכל הפרויקטים: דוד, טל ושרון. מנהלי פרויקט רואים רק את הפרויקטים של המספר שלהם.
-const PRIV = [
-  { name:'דוד',  phone:'0504560060' },
-  { name:'טל',   phone:'0524672267' },
-  { name:'שרון', phone:'0528633259' }
-];
-// מורשים לפרויקטים מסוימים בלבד (מזהים פרויקט מתוך הרשימה המטה)
-const RESTRICTED = [
-  { name:'מג׳ד',  phone:'0504344228', projects:['p12', 'p9', 'p1', 'p18'] },   // הולצברג, קרסו, עץ החיים, שנקר
-  { name:'איתי עם שלם', phone:'0522343636', projects:['p25'] },                // מאז"ה (בנוסף לרמת השרון, שבה הוא איש הקשר במקום גיא)
-  { name:'ליאור', phone:'0549733448', projects:['p6', 'p10'] },                // הרצל 66, עצמאות 28
-  { name:'גנאדי', phone:'0548169835', projects:['p13', 'p24'] },                // הפרויקטים של אולג: מלון לידו אשדוד, מלון תל אביב
-  { name:'שלומי רוזיליו', phone:'0506686277', projects:['p1', 'p20', 'p23', 'p28'] },  // עץ החיים ירושלים, הר נוף, עיר עולם, בית הידידות
-  { name:'סאמר', phone:'0508128202', projects:['p11'] }                                 // בנוסף לפרויקטים שלו: ברון הירש ת"א פורמה (בעבר נכנס דרך צביקה)
-];
+// מי מורשה ולאילו פרויקטים — מגיע מהשרת לפי הכניסה בבקרה (rkMe). הטלפונים של המנהלים לא נמצאים יותר בדף
+
 const APPROVER = { name:'טל', phone:'0524672267', whatsapp:'972524672267' };
 const APPROVAL_LIMIT = 10000;   // הזמנה שסכומה (כולל מע״מ) גבוה מזה — דורשת אישור של טל
 // תקציב חודשי לפרויקט (כולל מע״מ), לפי מזהה פרויקט. דוגמה: {p15: 30000, p4: 50000}. ריק = בלי תקציב, רק מוצג כמה הוזמן.
@@ -1141,232 +1146,21 @@ function overBudget(t){
   const b = BUDGETS[currentSite.id] || 0;
   return b > 0 && monthSpend.value + t > b;
 }
-function needsApproval(totalInclVat){ return (totalInclVat > APPROVAL_LIMIT || overBudget(totalInclVat)) && !(user && user.phone === APPROVER.phone); }
+function needsApproval(totalInclVat){ return (totalInclVat > APPROVAL_LIMIT || overBudget(totalInclVat)) && !(rkMe && rkMe.approver); }
 function fmtN(n){ return Number(n).toLocaleString('he-IL', {maximumFractionDigits:0}); }
 
-const PROJECTS = [
- {
-  "id": "p1",
-  "client": "אשטרום",
-  "contact": "אלי רוט",
-  "phone": "0522085050",
-  "name": "עץ החיים ירושלים"
- },
- {
-  "id": "p2",
-  "client": "מנרב",
-  "contact": "אייל פאטורי",
-  "phone": "0544235277",
-  "name": "חצרים"
- },
- {
-  "id": "p3",
-  "client": "אשטרום הנדסה",
-  "contact": "ראובן כהן",
-  "phone": "0542228217",
-  "name": "מרים החשמונאית"
- },
- {
-  "id": "p4",
-  "client": "יעקבי יוניברסל",
-  "contact": "סאמר",
-  "phone": "0508128202",
-  "name": "פרויקט לוד"
- },
- {
-  "id": "p5",
-  "client": "יעקבי יוניברסל",
-  "contact": "באהה",
-  "phone": "0527067565",
-  "name": "פרויקט פ\"ת"
- },
- {
-  "id": "p6",
-  "client": "קבוצת אשטרום",
-  "contact": "יער",
-  "phone": "0542580699",
-  "also": [{"name": "ליאור", "phone": "0549733448"}],
-  "name": "הרצל 66 בת ים"
- },
- {
-  "id": "p7",
-  "client": "פורמה",
-  "contact": "אלכס",
-  "phone": "0523624050",
-  "name": "בת ים הפרדס פורמה"
- },
- {
-  "id": "p8",
-  "client": "אלקטרה",
-  "contact": "אבו לאבן",
-  "phone": "0504263388",
-  "name": "מתחם 5 כפר אזר"
- },
- {
-  "id": "p9",
-  "client": "דניה",
-  "contact": "מוראר",
-  "phone": "0504388586",
-  "name": "קרסו וייצמן 55-57 חולון דניה"
- },
- {
-  "id": "p10",
-  "client": "לוינשטין נתיב",
-  "contact": "יער",
-  "phone": "0542580699",
-  "also": [{"name": "ליאור", "phone": "0549733448"}],
-  "name": "עצמאות 28 בת ים לוינשטיין"
- },
- {
-  "id": "p11",
-  "client": "פורמה",
-  "contact": "צביקה",
-  "phone": "0527979851",
-  "name": "הברון הירש ת\"א פורמה"
- },
- {
-  "id": "p12",
-  "client": "דניה",
-  "contact": "מג׳ד",
-  "phone": "0504344228",
-  "name": "הולצברג בת ים דניה"
- },
- {
-  "id": "p13",
-  "client": "גבאי",
-  "contact": "אולג",
-  "phone": "0529767299",
-  "name": "מלון לידו אשדוד"
- },
- {
-  "id": "p14",
-  "client": "הר סוף",
-  "contact": "וואהל",
-  "phone": "0523474389",
-  "name": "מגרש 105 מזכרת בתיה"
- },
- {
-  "id": "p15",
-  "client": "הר סוף",
-  "contact": "וואהל",
-  "phone": "0523474389",
-  "name": "קוטגים"
- },
- {
-  "id": "p16",
-  "client": "הר סוף",
-  "contact": "באהה",
-  "phone": "0527067565",
-  "name": "מגרש 19-20 מזכרת בתיה"
- },
- {
-  "id": "p17",
-  "client": "הר סוף",
-  "contact": "סאמר",
-  "phone": "0508128202",
-  "name": "מגרש 504 גדרה"
- },
- {
-  "id": "p18",
-  "client": "דניה",
-  "contact": "מג׳ד",
-  "phone": "0504344228",
-  "name": "שנקר חולון"
- },
- {
-  "id": "p19",
-  "client": "דניה",
-  "contact": "וואהל",
-  "phone": "0523474389",
-  "name": "מרלו\"ג פוקס בית שמש"
- },
- {
-  "id": "p20",
-  "client": "דניה",
-  "contact": "יניב",
-  "phone": "0556888776",
-  "name": "הר נוף"
- },
- {
-  "id": "p21",
-  "client": "רוטשטיין",
-  "contact": "איתי עם שלם",
-  "phone": "0522343636",
-  "name": "רמת השרון"
- },
- {
-  "id": "p22",
-  "client": "דניה",
-  "contact": "משה",
-  "phone": "0505506168",
-  "name": "גליל ים"
- },
- {
-  "id": "p23",
-  "client": "דניה",
-  "contact": "כרובי",
-  "phone": "0543302744",
-  "name": "עיר עולם"
- },
- {
-  "id": "p24",
-  "client": "יצחקי",
-  "contact": "אולג/גינאדי",
-  "phone": "0529767299",
-  "name": "מלון תל אביב"
- },
- {
-  "id": "p25",
-  "client": "אשטרום",
-  "contact": "באהה",
-  "phone": "0527067565",
-  "name": "מאז\"ה"
- },
- {
-  "id": "p26",
-  "client": "",
-  "contact": "סאמר",
-  "phone": "0508128202",
-  "name": "כרמי הנדיב"
- },
- {
-  "id": "p27",
-  "client": "רוטשטיין",
-  "contact": "סאמר",
-  "phone": "0508128202",
-  "name": "רוטשטיין לוד"
- },
- {
-  "id": "p28",
-  "client": "אשטרום",
-  "contact": "אלי רוט",
-  "phone": "0522085050",
-  "name": "בית הידידות"
- }
-];
+let PROJECTS = [];   // הפרויקטים של המשתמש המחובר (מהשרת: action=me)
 let mgrPhone = null;
 let user = null;          // {name, phone, priv}
 let currentSite = null;
 let pending = null;       // הזמנה שממתינה לאישור של טל
 function normPhone(s){ let d = String(s || '').replace(/\D/g, ''); if(d.startsWith('972')) d = '0' + d.slice(3); return d; }
-function privOf(ph){ return PRIV.find(p => normPhone(p.phone) === ph); }
-function restrOf(ph){ return RESTRICTED.find(r => normPhone(r.phone) === ph); }
-function isKnown(ph){ return ph.length >= 9 && (!!privOf(ph) || !!restrOf(ph) || PROJECTS.some(p => normPhone(p.phone) === ph)); }
-function myProjects(){
-  if(!mgrPhone) return [];
-  if(privOf(mgrPhone)) return PROJECTS.slice();
-  const own = PROJECTS.filter(p => normPhone(p.phone) === mgrPhone);
-  const r = restrOf(mgrPhone);
-  if(!r) return own;
-  return own.concat(PROJECTS.filter(p => r.projects.includes(p.id) && !own.includes(p)));
-}
+let rkMe = null;   // {name, phone, all, exempt, approver, projects} — מהשרת, לפי הכניסה בבקרה
+function isKnown(ph){ return !!(rkMe && rkMe.phone === ph); }
+function myProjects(){ return mgrPhone && rkMe ? rkMe.projects.slice() : []; }
 function setUser(ph){
   mgrPhone = ph;
-  const pv = privOf(ph);
-  const rs = restrOf(ph);
-  if(pv) user = {name:pv.name, phone:ph, priv:true};
-  else if(rs) user = {name:rs.name, phone:ph, priv:false};
-  else { const f = PROJECTS.find(p => normPhone(p.phone) === ph); user = {name:f ? f.contact : '', phone:ph, priv:false}; }
+  user = rkMe ? {name:rkMe.name, phone:rkMe.phone, priv:!!rkMe.all} : null;
 }
 function escH(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function lsSet(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
@@ -1400,14 +1194,7 @@ function filterProjects(v){ document.getElementById('projList').innerHTML = proj
 function showEntry(){
   const box = document.getElementById('entryIn');
   if(!mgrPhone){
-    box.innerHTML = `
-      ${langPickerHtml()}${entryLogo()}
-      <h1>כניסה</h1>
-      <p class="sub">הקלד את מספר הנייד שלך. מנהל פרויקט רואה ומזמין רק עבור הפרויקטים שלו.</p>
-      <input id="lg-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="מספר נייד, למשל 0501234567" onkeydown="if(event.key==='Enter') doLogin()">
-      <div id="lg-err" style="color:var(--urgent); font-size:12.5px; margin-top:8px; min-height:18px;"></div>
-      <button class="send-btn" style="margin-top:6px;" onclick="doLogin()">כניסה</button>
-      <p class="sub" style="margin-top:16px;">הזמנת חומר מתבצעת דרך שרון: ההזמנה נשלחת אליה בווצאפ והיא מעבירה אותה לספק. הזמנה מעל ₪${fmtN(APPROVAL_LIMIT)} דורשת אישור של ${APPROVER.name}.</p>`;
+    box.innerHTML = rkGateHtml(rkGateKind);
   } else {
     box.innerHTML = `
       ${langPickerHtml()}${entryLogo()}
@@ -1415,23 +1202,53 @@ function showEntry(){
       <p class="sub">${user && user.priv ? 'בחר את הפרויקט שעבורו אתה מזמין:' : 'בחר את הפרויקט שעבורו אתה מזמין:'}</p>
       ${user && user.priv ? '<input id="pj-search" placeholder="חיפוש פרויקט, חברה או מנהל" oninput="filterProjects(this.value)" style="margin-bottom:10px;">' : ''}
       <div id="projList">${projectCards('')}</div>
-      <div style="text-align:center; margin-top:14px;"><a onclick="logout()" style="color:var(--pipe-blue); font-weight:700; font-size:13px; cursor:pointer;">לא אתה? החלף משתמש</a></div>`;
+      <div class="sub" style="text-align:center; margin-top:14px;">מחובר כ-${escH(user ? user.name : '')} לפי הכניסה בבקרה</div>`;
   }
   document.getElementById('entry').classList.add('open');
   window.scrollTo(0, 0);
 }
-function doLogin(){
-  const d = normPhone(document.getElementById('lg-phone').value);
-  if(!isKnown(d)){
-    document.getElementById('lg-err').textContent = 'המספר לא נמצא ברשימה. פנה לרכש.';
-    return;
-  }
-  setUser(d);
-  lsSet('mgrPhone', d);
-  loadPending();
-  const list = myProjects();
-  if(!user.priv && list.length === 1) selectSite(list[0].id); else showEntry();
+// ===== כניסה דרך הבקרה =====
+const BAKARA_URL = '../bakaraapp/';
+let rkGateKind = 'wait';
+function rkGateHtml(kind){
+  const go = `<a class="send-btn" style="display:block; text-align:center; text-decoration:none; margin-top:10px;" href="${BAKARA_URL}" target="_top">פתח את הבקרה</a>`;
+  const T = {
+    wait: ['רגע…', 'בודק את הכניסה שלך', ''],
+    signin: ['הרכש עובר דרך הבקרה', 'כדי להזמין חומר נכנסים לבקרה עם מספר הטלפון שלך (קוד ב-SMS), ושם פותחים "מלאי ורכש" ← "הזמנת חומר".', go],
+    forbidden: ['אין לך הרשאה להזמין', 'המספר שלך מחובר לבקרה, אבל לא מורשה בהזמנת חומר. פנה לדוד או לשרון.', go],
+    unauthorized: ['הכניסה לא אושרה', 'המשתמש שלך בבקרה לא פעיל או שהכניסה פגה. פתח את הבקרה והיכנס מחדש.', go],
+    offline: ['אין חיבור', 'צריך אינטרנט כדי לבדוק את הכניסה בפעם הראשונה.', '<button class="send-btn" style="margin-top:10px;" onclick="initSite()">נסה שוב</button>']
+  }[kind] || ['שגיאה', '', go];
+  return `${langPickerHtml()}${entryLogo()}<h1>${T[0]}</h1><p class="sub">${T[1]}</p>${T[2]}`;
 }
+const RK_FB_CONFIG = { apiKey:"AIzaSyCnFsct2Q4yhh1CH-fPu6t_e2PFkGTM_Sk", authDomain:"bakara-b4231.firebaseapp.com", projectId:"bakara-b4231",
+  storageBucket:"bakara-b4231.firebasestorage.app", messagingSenderId:"316003592694", appId:"1:316003592694:web:e1dc8415b4f7ed1e073fd7" };   // של הבקרה
+function rkFb(){ if(typeof firebase === 'undefined' || !firebase.initializeApp) return false; if(!firebase.apps.length) firebase.initializeApp(RK_FB_CONFIG); return true; }
+function rkAuthUser(){
+  return new Promise(res => {
+    try{
+      if(!rkFb() || !firebase.auth){ res(null); return; }
+      const off = firebase.auth().onAuthStateChanged(u => { off(); res(u); });
+    }catch(e){ res(null); }
+  });
+}
+async function rkToken(){
+  try{ if(!rkFb()) return ''; const u = firebase.auth().currentUser; if(!u) return ''; rkTok = await u.getIdToken(); return rkTok; }catch(e){ return ''; }
+}
+let rkTok = '';
+async function loadMe(){
+  const u = await rkAuthUser();
+  if(!u) return {error:'signin'};
+  try{
+    const j = await (await fetch(LOG_URL + '?action=me')).json();
+    if(j && j.phone){ lsSet('rkMe', JSON.stringify(j)); return j; }
+    return {error: (j && j.error) || 'unauthorized'};
+  }catch(e){
+    try{ const c = JSON.parse(lsGet('rkMe') || 'null'); if(c && u.phoneNumber && c.phone === '0' + u.phoneNumber.replace(/^\+972/, '')) return c; }catch(e2){}
+    return {error:'offline'};
+  }
+}
+function doLogin(){ initSite(); }
 function selectSite(id){
   const s = myProjects().find(x => x.id === id);
   if(!s) return;
@@ -1447,8 +1264,7 @@ function selectSite(id){
 
 // ===== הזמנה מתוך אפליקציית הבקרה: #order={"p":"p4","items":[{"n":"שם","q":10,"u":"יח׳"}]} =====
 // הבקרה שולחת את החוסרים של האתר; הם נכנסים לעגלה של הפרויקט (פריט מהקטלוג — לפי שם, אחרת כפריט חופשי)
-// #as=05… — כשהרכש פתוח כלשונית בתוך הבקרה, הבקרה מעבירה את הטלפון של המשתמש המחובר (נכנסים בלי להקליד)
-// אותה בקשה יכולה להגיע גם כשהרכש כבר פתוח (שינוי ב-hash) — מטופל ב-hashchange
+// הזמנה מהבקרה יכולה להגיע גם כשהרכש כבר פתוח (שינוי ב-hash) — מטופל ב-hashchange. הזהות לא עוברת ב-hash (רק דרך הכניסה)
 const EMBED = (()=>{ try{ return window.self !== window.top; }catch(e){ return true; } })();
 let bakaraOrder = null, bakaraAs = null;
 function readBakaraHash(){
@@ -1465,10 +1281,6 @@ readBakaraHash();
 window.addEventListener('hashchange', () => {
   if(!/[#&](order|as)=/.test(location.hash || '')) return;
   readBakaraHash();
-  if(bakaraAs && isKnown(bakaraAs) && bakaraAs !== mgrPhone){
-    setUser(bakaraAs); lsSet('mgrPhone', bakaraAs); loadPending();
-    currentSite = null; renderSiteChip();
-  }
   if(!mgrPhone){ showEntry(); return; }
   if(bakaraOrder) applyBakaraOrder();
   else if(!currentSite) showEntry();
@@ -1503,18 +1315,15 @@ function applyBakaraOrder(){
   refreshCartUI();
   showToast(n + (n === 1 ? ' פריט מהבקרה נוסף לעגלה' : ' פריטים מהבקרה נוספו לעגלה') + ' — בדוק כמויות ושלח');
 }
-function logout(){
-  mgrPhone = null; user = null; currentSite = null; pending = null;
-  lsDel('mgrPhone'); lsDel('projId');
-  cart = {};
-  refreshCartUI();
-  renderSiteChip();
-  showEntry();
+function logout(){   // המשתמש נקבע לפי הכניסה בבקרה — יציאה מתבצעת שם
+  try{ (window.top || window).location.href = BAKARA_URL; }catch(e){ location.href = BAKARA_URL; }
 }
-function initSite(){
-  if(bakaraAs && isKnown(bakaraAs)) lsSet('mgrPhone', bakaraAs);   // נפתח מתוך הבקרה: המשתמש המחובר בבקרה
-  const ph = lsGet('mgrPhone');
-  if(ph && isKnown(ph)) setUser(ph);
+async function initSite(){
+  rkGateKind = 'wait'; mgrPhone = null; user = null; rkMe = null; showEntry();
+  const me = await loadMe();
+  if(!me || me.error){ rkGateKind = (me && me.error) || 'unauthorized'; mgrPhone = null; user = null; showEntry(); return; }
+  rkMe = me; PROJECTS = me.projects || [];
+  setUser(me.phone); lsSet('mgrPhone', me.phone);
   if(mgrPhone){
     loadPending();
     const mine = myProjects();
@@ -2454,7 +2263,6 @@ window.confirm = m => _confirmOrig(trText(m, LANG));
 
 // ===== שעת סגירה יומית להזמנות (שעון ישראל) =====
 const CUTOFF = {h:10, m:30, s:0};
-const CUTOFF_EXEMPT = ['0504560060', '0524672267'];   // דוד וטל פטורים
 let timeOffset = 0;
 function nowMs(){ return Date.now() + timeOffset; }
 function ilSeconds(ms){
@@ -2472,7 +2280,7 @@ function ilDateStr(ms){
   return g.year + '-' + g.month + '-' + g.day;
 }
 function ordersClosed(){
-  if(user && CUTOFF_EXEMPT.includes(user.phone)) return false;
+  if(rkMe && rkMe.exempt) return false;   // דוד וטל פטורים (מהשרת)
   const s = ilSeconds(nowMs());
   return s > cutoffSeconds() || s < openSeconds();
 }
@@ -2487,7 +2295,7 @@ async function syncTime(){
   }catch(e){}
 }
 function cutoffBoxHtml(){
-  if(user && CUTOFF_EXEMPT.includes(user.phone)) return '';
+  if(rkMe && rkMe.exempt) return '';
   const s = ilSeconds(nowMs());
   const left = cutoffSeconds() - s;
   const box = 'margin-top:12px; padding:10px 12px; border-radius:10px; font-size:12.5px; line-height:1.5;';
