@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>הדפסת הזמנות — ט.ש. מי-רון</title>
+<!-- דף הדפסה נפרד לבקרה (נמצא כאן, מחוץ לתחום של אפליקציית הבקרה, כדי שבאייפון ייפתח בספארי ולא בתוך האפליקציה): הנתונים מגיעים בכתובת עצמה (אחרי #) ולא נשלחים לשום שרת.
+     נפתח מכפתור "הדפס" במסך הזמנות פתוחות — במחשב בלשונית חדשה, באייפון בספארי (מאפליקציה במסך הבית אי אפשר להדפיס) -->
+<style>
+  body{ margin:0; background:#fff; color:#000; font-family:"Heebo","Assistant",Arial,sans-serif; direction:rtl; }
+  .bar{ position:sticky; top:0; display:flex; gap:8px; align-items:center; flex-wrap:wrap; background:#fff; border-bottom:1px solid #ccc; padding:10px 14px; }
+  .bar b{ flex:1 1 180px; font-size:15px; }
+  .bar button{ font:inherit; font-weight:700; font-size:15px; padding:10px 16px; border-radius:10px; border:1px solid #1B2634; background:#1B2634; color:#fff; }
+  .hint{ width:100%; font-size:12.5px; color:#555; }
+  main{ padding:12px 14px 30px; }
+  h1{ font-size:20px; margin:0 0 4px; }
+  .meta{ font-size:13.5px; line-height:1.6; margin-bottom:6px; }
+  .st{ display:inline-block; border:1.5px solid #000; border-radius:4px; padding:1px 7px; font-weight:700; font-size:13px; }
+  table{ width:100%; border-collapse:collapse; font-size:13.5px; margin:4px 0 8px; }
+  th, td{ border:1px solid #777; padding:3px 6px; text-align:right; vertical-align:top; }
+  th{ background:#eee; }
+  td.q{ width:4.2em; text-align:center; white-space:nowrap; }
+  .sup{ font-weight:700; font-size:15px; margin-top:8px; }
+  .sup small{ font-weight:400; font-size:12px; }
+  .sig{ display:flex; gap:24px; margin-top:22px; font-size:13.5px; }
+  .sig div{ flex:1; border-top:1px solid #000; padding-top:3px; }
+  .foot{ font-size:12px; color:#444; margin-top:10px; }
+  .blk{ margin-bottom:18px; }
+  .pg{ border-bottom:2px dashed #bbb; padding-bottom:14px; margin-bottom:14px; }
+  .err{ padding:30px 14px; font-size:16px; }
+  @media print{
+    .bar{ display:none; }
+    main{ padding:0; }
+    @page{ size:A4; margin:12mm; }
+    h1{ font-size:17pt; } .meta, table, .sig{ font-size:10pt; } .sup{ font-size:11.5pt; }
+    .pg{ border:0; padding:0; margin:0; page-break-after:always; break-after:page; }
+    .pg:last-child{ page-break-after:auto; break-after:auto; }
+    .blk{ break-inside:avoid; page-break-inside:avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="bar"><b id="ttl">הדפסת הזמנות</b><button id="go" type="button">🖨 הדפס</button>
+  <div class="hint" id="hint"></div></div>
+<main id="out"></main>
+<script>
+(function(){
+  var out = document.getElementById("out");
+  var esc = function(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]; }); };
+  var pad = function(n){ return String(n).padStart(2, "0"); };
+  var when = function(t){ if(!t) return ""; var d = new Date(t); return pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()); };
+  var money = function(n){ return "₪" + Math.round(Number(n) || 0).toLocaleString("he-IL"); };
+  var needBy = function(v){ if(!v) return ""; if(typeof v === "number"){ var d = new Date(v); return pad(d.getDate()) + "/" + pad(d.getMonth() + 1); } var m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + "/" + m[2] : String(v); };
+  var phone = function(p){ return String(p || "").replace(/^(\d{3})(\d{7})$/, "$1-$2"); };
+  var lines = function(items){
+    return String(items || "").split("\n").map(function(l){ return l.trim(); }).filter(function(l){ return l && l.charAt(0) === "•"; }).map(function(l){
+      var m = l.match(/^•\s*(.*?)(?:\s*\|\s*מק״ט\s*(\S+))?\s+—\s+(\d+(?:\.\d+)?)\s*(.*)$/);
+      return m ? { n:m[1].trim(), sku:m[2] || "", q:m[3], u:(m[4] || "").trim() } : { n:l.replace(/^•\s*/, ""), sku:"", q:"", u:"" };
+    });
+  };
+  var d;
+  try{ d = JSON.parse(decodeURIComponent(location.hash.slice(1))); }catch(e){ d = null; }
+  if(!d || !Array.isArray(d.orders)){ out.innerHTML = '<div class="err">אין הזמנות להדפסה. פתח את הדף מכפתור "הדפס" בבקרה.</div>'; document.getElementById("go").style.display = "none"; return; }
+  var page = d.mode === "page";
+  var stTxt = function(o){ return o.stage === "tal" ? "ממתינה לאישור טל" : o.stage === "ok" ? "אושרה ע״י טל" : "לא נדרש אישור טל"; };
+  var printed = "הודפס " + when(Date.now()) + (d.who ? " ע״י " + d.who : "");
+  var one = function(o){
+    var h = '<div class="blk"><h1>' + (page ? "הזמנת רכש — " : "") + esc(o.project) + '</h1><div class="meta"><span class="st">' + stTxt(o) + '</span>' + (o.urgent ? ' <span class="st">⚡ דחוף</span>' : '') + '<br>'
+      + 'מספר: ' + esc(o.oid) + ' · נוצרה: ' + when(o.created) + ' · הזמין: ' + esc(o.user) + (o.phone ? ' (' + phone(o.phone) + ')' : '')
+      + (o.needBy ? '<br>נדרש עד: ' + esc(needBy(o.needBy)) : '') + (o.note ? '<br>הערת המזמין: ' + esc(o.note) : '')
+      + '<br>סכום ההזמנה: ' + money(o.total) + ' כולל מע״מ</div>';
+    (o.rows || []).forEach(function(r){
+      var ls = lines(r.items);
+      h += '<div class="sup">' + esc(r.supplier) + (r.real && r.real !== r.supplier ? ' ← ספק בפועל: ' + esc(r.real) : '') + (r.sub > 0 ? ' · ' + money(r.sub) + ' לפני מע״מ' : '') + ' <small>(' + esc(r.id) + ')</small></div>'
+        + '<table><thead><tr><th>פריט</th><th>כמות</th><th>יחידה</th></tr></thead><tbody>'
+        + (ls.length ? ls.map(function(l){ return '<tr><td>' + esc(l.n) + (l.sku ? ' · מק״ט ' + esc(l.sku) : '') + '</td><td class="q">' + esc(l.q) + '</td><td class="q">' + esc(l.u) + '</td></tr>'; }).join('')
+          : '<tr><td colspan="3">' + esc(r.items || "—") + '</td></tr>') + '</tbody></table>'
+        + (r.req ? '<div class="meta">בקשת שינוי: ' + esc(r.req) + '</div>' : '')
+        + (r.photos ? '<div class="meta">📷 ' + (r.photos === 1 ? 'תמונה מצורפת' : r.photos + ' תמונות מצורפות') + ' — לצפייה בבקרה או בגיליון</div>' : '');
+    });
+    if(page) h += '<div class="sig">' + (o.needAp ? '<div>אישור טל (חתימה ותאריך)</div>' : '') + '<div>טופל ע״י שרון · הועבר לספק (תאריך)</div></div><div class="foot">ט.ש. מי-רון · ' + esc(printed) + '</div>';
+    return h + '</div>';
+  };
+  out.innerHTML = page ? d.orders.map(function(o){ return '<div class="pg">' + one(o) + '</div>'; }).join('')
+    : '<h1>הזמנות פתוחות — ' + d.orders.length + (d.orders.length === 1 ? ' הזמנה' : ' הזמנות') + '</h1><div class="meta">ט.ש. מי-רון · ' + esc(printed) + '</div>' + d.orders.map(one).join('');
+  document.getElementById("ttl").textContent = (page ? "🖨 עמוד לכל הזמנה — " : "📋 רשימה מרוכזת — ") + d.orders.length + (d.orders.length === 1 ? " הזמנה" : " הזמנות");
+  var ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  document.getElementById("hint").textContent = ios ? "באייפון: אם חלון ההדפסה לא נפתח — לחץ על כפתור השיתוף של ספארי (ריבוע עם חץ) ובחר \"הדפסה\"." : "";
+  document.getElementById("go").onclick = function(){ window.print(); };
+  if(!ios) setTimeout(function(){ window.print(); }, 300);   // במחשב: חלון ההדפסה נפתח לבד
+})();
+</script>
+</body>
+</html>
