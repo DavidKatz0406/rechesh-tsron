@@ -83,7 +83,23 @@
   var page = d.mode === "page";
   var stTxt = function(o){ return o.stage === "tal" ? "ממתינה לאישור טל" : o.stage === "ok" ? "אושרה ע״י טל" : "לא נדרש אישור טל"; };
   var printed = "הודפס " + when(Date.now()) + (d.who ? " ע״י " + d.who : "");
-  var one = function(o){
+  // עותק לספק (d.sup): בלי מחירים, בלי שמות ספקים, בלי מק״ט ובלי סטטוס פנימי — אפשר לשלוח לכל ספק
+  var oneSup = function(o){
+    var h = '<div class="blk"><h1>הזמנת חומר — ' + esc(o.project) + '</h1><div class="meta">' + (o.urgent ? '<span class="st">⚡ דחוף</span><br>' : '')
+      + 'מספר הזמנה: ' + esc(o.oid) + ' · תאריך: ' + when(o.created) + '<br>איש קשר באתר: ' + esc(o.user) + (o.phone ? ' · ' + phone(o.phone) : '')
+      + (o.needBy ? '<br>נדרש עד: ' + esc(needBy(o.needBy)) : '') + (o.note ? '<br>הערות: ' + esc(o.note) : '') + '</div>';
+    var many = (o.rows || []).length > 1;
+    (o.rows || []).forEach(function(r, ri){
+      var ls = lines(r.items);
+      h += (many ? '<div class="sup">חלק ' + (ri + 1) + '</div>' : '')
+        + '<table><thead><tr><th>פריט</th><th>כמות</th><th>יחידה</th></tr></thead><tbody>'
+        + (ls.length ? ls.map(function(l){ return '<tr><td>' + esc(l.n) + '</td><td class="q">' + esc(l.q) + '</td><td class="q">' + esc(l.u) + '</td></tr>'; }).join('')
+          : '<tr><td colspan="3">' + esc(r.items || "—") + '</td></tr>') + '</tbody></table>'
+        + (r.req ? '<div class="meta">עדכון: ' + esc(r.req) + '</div>' : '');
+    });
+    return h + '<div class="foot">ט.ש. מי-רון</div></div>';
+  };
+  var one = d.sup ? oneSup : function(o){
     var h = '<div class="blk"><h1>' + (page ? "הזמנת רכש — " : "") + esc(o.project) + '</h1><div class="meta"><span class="st">' + stTxt(o) + '</span>' + (o.urgent ? ' <span class="st">⚡ דחוף</span>' : '') + '<br>'
       + 'מספר: ' + esc(o.oid) + ' · נוצרה: ' + when(o.created) + ' · הזמין: ' + esc(o.user) + (o.phone ? ' (' + phone(o.phone) + ')' : '')
       + (o.needBy ? '<br>נדרש עד: ' + esc(needBy(o.needBy)) : '') + (o.note ? '<br>הערת המזמין: ' + esc(o.note) : '')
@@ -102,7 +118,7 @@
   };
   out.innerHTML = page ? d.orders.map(function(o){ return '<div class="pg">' + one(o) + '</div>'; }).join('')
     : '<h1>הזמנות פתוחות — ' + d.orders.length + (d.orders.length === 1 ? ' הזמנה' : ' הזמנות') + '</h1><div class="meta">ט.ש. מי-רון · ' + esc(printed) + '</div>' + d.orders.map(one).join('');
-  document.getElementById("ttl").textContent = (page ? "🖨 עמוד לכל הזמנה — " : "📋 רשימה מרוכזת — ") + d.orders.length + (d.orders.length === 1 ? " הזמנה" : " הזמנות");
+  document.getElementById("ttl").textContent = d.sup ? "🖨 לספק — " + d.orders.length + (d.orders.length === 1 ? " הזמנה" : " הזמנות") + " · בלי מחירים וספקים" : (page ? "🖨 עמוד לכל הזמנה — " : "📋 רשימה מרוכזת — ") + d.orders.length + (d.orders.length === 1 ? " הזמנה" : " הזמנות");
   var ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
   document.getElementById("hint").textContent = ios ? "באייפון: אם חלון ההדפסה לא נפתח — לחץ על כפתור השיתוף של ספארי (ריבוע עם חץ) ובחר \"הדפסה\"." : "";
   document.getElementById("go").onclick = function(){ window.print(); };
